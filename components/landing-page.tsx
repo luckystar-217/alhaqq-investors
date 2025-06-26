@@ -5,7 +5,7 @@ import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/ca
 import { Users, MessageSquare, Share2, Shield, Zap, Globe, TrendingUp, DollarSign } from "lucide-react"
 import InvestmentHero from "@/components/investment/investment-hero"
 
-export default function LandingPage() {
+export function LandingPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white dark:from-gray-900 dark:to-gray-800">
       {/* Header */}
@@ -309,3 +309,5 @@ export default function LandingPage() {
     </div>
   )
 }
+
+export default LandingPage

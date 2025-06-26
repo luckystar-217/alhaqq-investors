@@ -1,23 +1,23 @@
 import type { NextAuthOptions } from "next-auth"
-import { getServerSession } from "next-auth"
 import CredentialsProvider from "next-auth/providers/credentials"
-import bcrypt from "bcryptjs"
+import GoogleProvider from "next-auth/providers/google"
+import { env } from "./env"
 
-// Mock user database - replace with real database in production
-const users = [
+// Mock user database for development
+const mockUsers = [
   {
     id: "1",
-    name: "Ahmed Al-Rashid",
     email: "ahmed@alhaqq.com",
-    password: "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj/VcSAg/9qm", // password123
-    image: "/images/investment-consultation.png",
+    password: "password123",
+    name: "Ahmed Al-Haqq",
+    image: "/placeholder-user.jpg",
   },
   {
     id: "2",
-    name: "Sarah Investment",
     email: "sarah@example.com",
-    password: "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj/VcSAg/9qm", // password123
-    image: null,
+    password: "password123",
+    name: "Sarah Johnson",
+    image: "/placeholder-user.jpg",
   },
 ]
 
@@ -34,33 +34,33 @@ export const authOptions: NextAuthOptions = {
           return null
         }
 
-        const user = users.find((user) => user.email === credentials.email)
+        const user = mockUsers.find((u) => u.email === credentials.email && u.password === credentials.password)
 
-        if (!user) {
-          return null
+        if (user) {
+          return {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            image: user.image,
+          }
         }
 
-        const isPasswordValid = await bcrypt.compare(credentials.password, user.password)
-
-        if (!isPasswordValid) {
-          return null
-        }
-
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          image: user.image,
-        }
+        return null
       },
     }),
+    ...(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
+      ? [
+          GoogleProvider({
+            clientId: env.GOOGLE_CLIENT_ID,
+            clientSecret: env.GOOGLE_CLIENT_SECRET,
+          }),
+        ]
+      : []),
   ],
-  session: {
-    strategy: "jwt",
-  },
   pages: {
     signIn: "/auth/signin",
     signUp: "/auth/signup",
+    error: "/auth/error",
   },
   callbacks: {
     async jwt({ token, user }) {
@@ -70,15 +70,14 @@ export const authOptions: NextAuthOptions = {
       return token
     },
     async session({ session, token }) {
-      if (token && session.user) {
+      if (token) {
         session.user.id = token.id as string
       }
       return session
     },
   },
-  secret: process.env.NEXTAUTH_SECRET || "your-secret-key-here",
-}
-
-export async function getServerAuthSession() {
-  return getServerSession(authOptions)
+  session: {
+    strategy: "jwt",
+  },
+  secret: env.NEXTAUTH_SECRET,
 }

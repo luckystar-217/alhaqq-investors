@@ -1,13 +1,5 @@
-import { redirect } from "next/navigation"
-import { getServerAuthSession } from "@/lib/auth"
-import LandingPage from "@/components/landing-page"
+import { LandingPage } from "@/components/landing-page"
 
-export default async function Home() {
-  const session = await getServerAuthSession()
-
-  if (session) {
-    redirect("/feed")
-  }
-
+export default function Home() {
   return <LandingPage />
 }
