@@ -1,46 +1,40 @@
 import { NextResponse } from "next/server"
-import { env, stackAuthConfig, dbConfig } from "@/lib/env"
+import { env } from "@/lib/env"
 import { logger } from "@/lib/logger"
 
 interface HealthCheck {
   service: string
   status: "healthy" | "unhealthy" | "degraded"
+  message?: string
   responseTime?: number
-  error?: string
-  details?: any
 }
 
 async function checkDatabase(): Promise<HealthCheck> {
   const start = Date.now()
   try {
     // Simple database connectivity check
-    if (!dbConfig.url) {
+    // In a real app, you'd use your database client here
+    if (!env.DATABASE_URL) {
       return {
         service: "database",
         status: "unhealthy",
-        error: "Database URL not configured",
+        message: "Database URL not configured",
+        responseTime: Date.now() - start,
       }
     }
-
-    // In a real implementation, you would test the actual database connection
-    // For now, we'll just check if the URL is valid
-    new URL(dbConfig.url)
 
     return {
       service: "database",
       status: "healthy",
+      message: "Database connection configured",
       responseTime: Date.now() - start,
-      details: {
-        host: dbConfig.host || "configured",
-        database: dbConfig.database || "configured",
-      },
     }
   } catch (error) {
     return {
       service: "database",
       status: "unhealthy",
+      message: error instanceof Error ? error.message : "Unknown database error",
       responseTime: Date.now() - start,
-      error: error instanceof Error ? error.message : "Unknown error",
     }
   }
 }
@@ -48,42 +42,27 @@ async function checkDatabase(): Promise<HealthCheck> {
 async function checkStackAuth(): Promise<HealthCheck> {
   const start = Date.now()
   try {
-    if (!stackAuthConfig.projectId || !stackAuthConfig.publishableClientKey) {
+    if (!env.NEXT_PUBLIC_STACK_PROJECT_ID || !env.STACK_SECRET_SERVER_KEY) {
       return {
         service: "stack-auth",
         status: "unhealthy",
-        error: "Stack Auth not configured",
-      }
-    }
-
-    // Test Stack Auth JWKS endpoint
-    const jwksUrl = `https://api.stack-auth.com/api/v1/projects/${stackAuthConfig.projectId}/.well-known/jwks.json`
-    const response = await fetch(jwksUrl, { method: "HEAD" })
-
-    if (!response.ok) {
-      return {
-        service: "stack-auth",
-        status: "unhealthy",
+        message: "Stack Auth not configured",
         responseTime: Date.now() - start,
-        error: `JWKS endpoint returned ${response.status}`,
       }
     }
 
     return {
       service: "stack-auth",
       status: "healthy",
+      message: "Stack Auth configured",
       responseTime: Date.now() - start,
-      details: {
-        projectId: stackAuthConfig.projectId,
-        jwksUrl,
-      },
     }
   } catch (error) {
     return {
       service: "stack-auth",
       status: "unhealthy",
+      message: error instanceof Error ? error.message : "Unknown Stack Auth error",
       responseTime: Date.now() - start,
-      error: error instanceof Error ? error.message : "Unknown error",
     }
   }
 }
@@ -95,74 +74,40 @@ async function checkRedis(): Promise<HealthCheck> {
       return {
         service: "redis",
         status: "degraded",
-        error: "Redis not configured (optional)",
+        message: "Redis not configured (optional)",
+        responseTime: Date.now() - start,
       }
     }
 
-    // In a real implementation, you would test the actual Redis connection
     return {
       service: "redis",
       status: "healthy",
+      message: "Redis configured",
       responseTime: Date.now() - start,
     }
   } catch (error) {
     return {
       service: "redis",
       status: "unhealthy",
+      message: error instanceof Error ? error.message : "Unknown Redis error",
       responseTime: Date.now() - start,
-      error: error instanceof Error ? error.message : "Unknown error",
-    }
-  }
-}
-
-async function checkExternalAPIs(): Promise<HealthCheck> {
-  const start = Date.now()
-  try {
-    const checks = []
-
-    // Check financial data API if configured
-    if (env.FINANCIAL_DATA_API_KEY) {
-      checks.push("financial-api")
-    }
-
-    // Check market data API if configured
-    if (env.MARKET_DATA_API_URL) {
-      checks.push("market-api")
-    }
-
-    return {
-      service: "external-apis",
-      status: checks.length > 0 ? "healthy" : "degraded",
-      responseTime: Date.now() - start,
-      details: {
-        configured: checks,
-      },
-    }
-  } catch (error) {
-    return {
-      service: "external-apis",
-      status: "unhealthy",
-      responseTime: Date.now() - start,
-      error: error instanceof Error ? error.message : "Unknown error",
     }
   }
 }
 
 export async function GET() {
-  const start = Date.now()
-
   try {
-    logger.info("Health check requested")
+    const startTime = Date.now()
 
-    // Run all health checks in parallel
-    const [databaseCheck, stackAuthCheck, redisCheck, externalAPIsCheck] = await Promise.all([
+    // Run health checks in parallel
+    const [databaseCheck, stackAuthCheck, redisCheck] = await Promise.all([
       checkDatabase(),
       checkStackAuth(),
       checkRedis(),
-      checkExternalAPIs(),
     ])
 
-    const checks = [databaseCheck, stackAuthCheck, redisCheck, externalAPIsCheck]
+    const checks = [databaseCheck, stackAuthCheck, redisCheck]
+    const totalResponseTime = Date.now() - startTime
 
     // Determine overall status
     const hasUnhealthy = checks.some((check) => check.status === "unhealthy")
@@ -177,33 +122,33 @@ export async function GET() {
       overallStatus = "healthy"
     }
 
-    const healthData = {
+    const response = {
       status: overallStatus,
       timestamp: new Date().toISOString(),
-      responseTime: Date.now() - start,
-      version: process.env.npm_package_version || "unknown",
       environment: env.NODE_ENV,
+      version: process.env.npm_package_version || "unknown",
       uptime: process.uptime(),
+      responseTime: totalResponseTime,
       checks,
-      system: {
-        nodeVersion: process.version,
-        platform: process.platform,
-        arch: process.arch,
-        memory: {
-          used: Math.round((process.memoryUsage().heapUsed / 1024 / 1024) * 100) / 100,
-          total: Math.round((process.memoryUsage().heapTotal / 1024 / 1024) * 100) / 100,
-        },
+      features: {
+        socialLogin: env.ENABLE_SOCIAL_LOGIN,
+        emailVerification: env.ENABLE_EMAIL_VERIFICATION,
+        twoFactorAuth: env.ENABLE_TWO_FACTOR_AUTH,
+        investmentTracking: env.ENABLE_INVESTMENT_TRACKING,
+        realTimeUpdates: env.ENABLE_REAL_TIME_UPDATES,
+        maintenanceMode: env.MAINTENANCE_MODE,
       },
     }
 
-    const statusCode = overallStatus === "healthy" ? 200 : overallStatus === "degraded" ? 200 : 503
-
     logger.info("Health check completed", {
       status: overallStatus,
-      responseTime: Date.now() - start,
+      responseTime: totalResponseTime,
     })
 
-    return NextResponse.json(healthData, { status: statusCode })
+    // Return appropriate HTTP status code
+    const httpStatus = overallStatus === "healthy" ? 200 : overallStatus === "degraded" ? 200 : 503
+
+    return NextResponse.json(response, { status: httpStatus })
   } catch (error) {
     logger.error("Health check failed", { error: error instanceof Error ? error.message : String(error) })
 
@@ -211,7 +156,6 @@ export async function GET() {
       {
         status: "unhealthy",
         timestamp: new Date().toISOString(),
-        responseTime: Date.now() - start,
         error: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 503 },

@@ -1,5 +1,6 @@
+import { NextResponse } from "next/server"
+import { ZodError } from "zod"
 import { logger } from "./logger"
-import { env } from "./env"
 
 export class AppError extends Error {
   public readonly statusCode: number
@@ -21,13 +22,13 @@ export class ValidationError extends AppError {
 }
 
 export class AuthenticationError extends AppError {
-  constructor(message = "Authentication failed") {
+  constructor(message = "Authentication required") {
     super(message, 401)
   }
 }
 
 export class AuthorizationError extends AppError {
-  constructor(message = "Access denied") {
+  constructor(message = "Insufficient permissions") {
     super(message, 403)
   }
 }
@@ -50,104 +51,74 @@ export class RateLimitError extends AppError {
   }
 }
 
-export class DatabaseError extends AppError {
-  constructor(message = "Database operation failed") {
-    super(message, 500)
+export function handleError(error: unknown): NextResponse {
+  logger.error("Error occurred", { error: error instanceof Error ? error.message : String(error) })
+
+  // Handle Zod validation errors
+  if (error instanceof ZodError) {
+    const validationErrors = error.errors.map((err) => ({
+      field: err.path.join("."),
+      message: err.message,
+    }))
+
+    return NextResponse.json(
+      {
+        error: "Validation failed",
+        details: validationErrors,
+      },
+      { status: 400 },
+    )
   }
-}
 
-export class ExternalServiceError extends AppError {
-  constructor(message = "External service unavailable") {
-    super(message, 503)
-  }
-}
-
-export function handleError(error: Error): {
-  message: string
-  statusCode: number
-  stack?: string
-} {
-  logger.error("Application error occurred", { error: error.message }, error)
-
+  // Handle custom app errors
   if (error instanceof AppError) {
-    return {
-      message: error.message,
-      statusCode: error.statusCode,
-      ...(env.NODE_ENV === "development" && { stack: error.stack }),
-    }
+    return NextResponse.json(
+      {
+        error: error.message,
+      },
+      { status: error.statusCode },
+    )
   }
 
-  // Handle specific error types
-  if (error.name === "ValidationError") {
-    return {
-      message: "Validation failed",
-      statusCode: 400,
-      ...(env.NODE_ENV === "development" && { stack: error.stack }),
-    }
+  // Handle generic errors
+  if (error instanceof Error) {
+    return NextResponse.json(
+      {
+        error: process.env.NODE_ENV === "production" ? "Internal server error" : error.message,
+      },
+      { status: 500 },
+    )
   }
 
-  if (error.name === "CastError") {
-    return {
-      message: "Invalid data format",
-      statusCode: 400,
-      ...(env.NODE_ENV === "development" && { stack: error.stack }),
-    }
-  }
-
-  if (error.name === "JsonWebTokenError") {
-    return {
-      message: "Invalid token",
-      statusCode: 401,
-      ...(env.NODE_ENV === "development" && { stack: error.stack }),
-    }
-  }
-
-  if (error.name === "TokenExpiredError") {
-    return {
-      message: "Token expired",
-      statusCode: 401,
-      ...(env.NODE_ENV === "development" && { stack: error.stack }),
-    }
-  }
-
-  // Default error response
-  return {
-    message: env.NODE_ENV === "production" ? "Internal server error" : error.message,
-    statusCode: 500,
-    ...(env.NODE_ENV === "development" && { stack: error.stack }),
-  }
+  // Handle unknown errors
+  return NextResponse.json(
+    {
+      error: "An unexpected error occurred",
+    },
+    { status: 500 },
+  )
 }
 
-export function asyncHandler<T extends any[], R>(fn: (...args: T) => Promise<R>): (...args: T) => Promise<R> {
-  return async (...args: T): Promise<R> => {
+export function withErrorHandler<T extends any[], R>(
+  fn: (...args: T) => Promise<R>,
+): (...args: T) => Promise<R | NextResponse> {
+  return async (...args: T) => {
     try {
       return await fn(...args)
     } catch (error) {
-      logger.error("Async handler error", { error: error instanceof Error ? error.message : String(error) })
-      throw error
+      return handleError(error)
     }
   }
 }
 
 // Global error handler for unhandled promise rejections
-process.on("unhandledRejection", (reason: unknown, promise: Promise<any>) => {
-  logger.error("Unhandled Promise Rejection", {
-    reason: reason instanceof Error ? reason.message : String(reason),
-    promise: promise.toString(),
+if (typeof window === "undefined") {
+  process.on("unhandledRejection", (reason, promise) => {
+    logger.error("Unhandled Rejection at:", { promise, reason })
   })
 
-  if (env.NODE_ENV === "production") {
-    // Gracefully close the server
+  process.on("uncaughtException", (error) => {
+    logger.error("Uncaught Exception:", { error: error.message, stack: error.stack })
     process.exit(1)
-  }
-})
-
-// Global error handler for uncaught exceptions
-process.on("uncaughtException", (error: Error) => {
-  logger.error("Uncaught Exception", { error: error.message }, error)
-
-  if (env.NODE_ENV === "production") {
-    // Gracefully close the server
-    process.exit(1)
-  }
-})
+  })
+}
