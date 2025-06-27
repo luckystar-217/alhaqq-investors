@@ -3,207 +3,215 @@ import { env, stackAuthConfig, dbConfig } from "@/lib/env"
 import { logger } from "@/lib/logger"
 
 interface HealthCheck {
+  service: string
   status: "healthy" | "unhealthy" | "degraded"
-  timestamp: string
-  version: string
-  environment: string
-  services: {
-    database: ServiceStatus
-    stackAuth: ServiceStatus
-    redis?: ServiceStatus
-    email?: ServiceStatus
-    storage?: ServiceStatus
-  }
-  uptime: number
-}
-
-interface ServiceStatus {
-  status: "healthy" | "unhealthy" | "not_configured"
-  latency?: number
+  responseTime?: number
   error?: string
-  lastChecked: string
+  details?: any
 }
 
-const startTime = Date.now()
-
-async function checkDatabase(): Promise<ServiceStatus> {
-  const startTime = Date.now()
+async function checkDatabase(): Promise<HealthCheck> {
+  const start = Date.now()
   try {
+    // Simple database connectivity check
     if (!dbConfig.url) {
       return {
-        status: "not_configured",
-        lastChecked: new Date().toISOString(),
+        service: "database",
+        status: "unhealthy",
+        error: "Database URL not configured",
       }
     }
 
-    // Simple connection test - in production, use actual database client
-    const latency = Date.now() - startTime
+    // In a real implementation, you would test the actual database connection
+    // For now, we'll just check if the URL is valid
+    new URL(dbConfig.url)
+
     return {
+      service: "database",
       status: "healthy",
-      latency,
-      lastChecked: new Date().toISOString(),
+      responseTime: Date.now() - start,
+      details: {
+        host: dbConfig.host || "configured",
+        database: dbConfig.database || "configured",
+      },
     }
   } catch (error) {
-    logger.error("Database health check failed", { error })
     return {
+      service: "database",
       status: "unhealthy",
+      responseTime: Date.now() - start,
       error: error instanceof Error ? error.message : "Unknown error",
-      lastChecked: new Date().toISOString(),
     }
   }
 }
 
-async function checkStackAuth(): Promise<ServiceStatus> {
-  const startTime = Date.now()
+async function checkStackAuth(): Promise<HealthCheck> {
+  const start = Date.now()
   try {
-    if (!stackAuthConfig.projectId || !stackAuthConfig.publishableClientKey || !stackAuthConfig.secretServerKey) {
+    if (!stackAuthConfig.projectId || !stackAuthConfig.publishableClientKey) {
       return {
-        status: "not_configured",
-        lastChecked: new Date().toISOString(),
+        service: "stack-auth",
+        status: "unhealthy",
+        error: "Stack Auth not configured",
       }
     }
 
-    // Basic configuration check
-    const latency = Date.now() - startTime
+    // Test Stack Auth JWKS endpoint
+    const jwksUrl = `https://api.stack-auth.com/api/v1/projects/${stackAuthConfig.projectId}/.well-known/jwks.json`
+    const response = await fetch(jwksUrl, { method: "HEAD" })
+
+    if (!response.ok) {
+      return {
+        service: "stack-auth",
+        status: "unhealthy",
+        responseTime: Date.now() - start,
+        error: `JWKS endpoint returned ${response.status}`,
+      }
+    }
+
     return {
+      service: "stack-auth",
       status: "healthy",
-      latency,
-      lastChecked: new Date().toISOString(),
+      responseTime: Date.now() - start,
+      details: {
+        projectId: stackAuthConfig.projectId,
+        jwksUrl,
+      },
     }
   } catch (error) {
-    logger.error("Stack Auth health check failed", { error })
     return {
+      service: "stack-auth",
       status: "unhealthy",
+      responseTime: Date.now() - start,
       error: error instanceof Error ? error.message : "Unknown error",
-      lastChecked: new Date().toISOString(),
     }
   }
 }
 
-async function checkRedis(): Promise<ServiceStatus | undefined> {
-  if (!env.REDIS_URL) {
-    return undefined
-  }
-
-  const startTime = Date.now()
+async function checkRedis(): Promise<HealthCheck> {
+  const start = Date.now()
   try {
-    // Redis health check would go here
-    const latency = Date.now() - startTime
+    if (!env.REDIS_URL) {
+      return {
+        service: "redis",
+        status: "degraded",
+        error: "Redis not configured (optional)",
+      }
+    }
+
+    // In a real implementation, you would test the actual Redis connection
     return {
+      service: "redis",
       status: "healthy",
-      latency,
-      lastChecked: new Date().toISOString(),
+      responseTime: Date.now() - start,
     }
   } catch (error) {
-    logger.error("Redis health check failed", { error })
     return {
+      service: "redis",
       status: "unhealthy",
+      responseTime: Date.now() - start,
       error: error instanceof Error ? error.message : "Unknown error",
-      lastChecked: new Date().toISOString(),
     }
   }
 }
 
-async function checkEmail(): Promise<ServiceStatus | undefined> {
-  if (!env.SMTP_HOST) {
-    return undefined
-  }
-
-  const startTime = Date.now()
+async function checkExternalAPIs(): Promise<HealthCheck> {
+  const start = Date.now()
   try {
-    // Email service health check would go here
-    const latency = Date.now() - startTime
+    const checks = []
+
+    // Check financial data API if configured
+    if (env.FINANCIAL_DATA_API_KEY) {
+      checks.push("financial-api")
+    }
+
+    // Check market data API if configured
+    if (env.MARKET_DATA_API_URL) {
+      checks.push("market-api")
+    }
+
     return {
-      status: "healthy",
-      latency,
-      lastChecked: new Date().toISOString(),
+      service: "external-apis",
+      status: checks.length > 0 ? "healthy" : "degraded",
+      responseTime: Date.now() - start,
+      details: {
+        configured: checks,
+      },
     }
   } catch (error) {
-    logger.error("Email health check failed", { error })
     return {
+      service: "external-apis",
       status: "unhealthy",
+      responseTime: Date.now() - start,
       error: error instanceof Error ? error.message : "Unknown error",
-      lastChecked: new Date().toISOString(),
-    }
-  }
-}
-
-async function checkStorage(): Promise<ServiceStatus | undefined> {
-  if (!env.AWS_ACCESS_KEY_ID && !env.UPLOADTHING_SECRET) {
-    return undefined
-  }
-
-  const startTime = Date.now()
-  try {
-    // Storage service health check would go here
-    const latency = Date.now() - startTime
-    return {
-      status: "healthy",
-      latency,
-      lastChecked: new Date().toISOString(),
-    }
-  } catch (error) {
-    logger.error("Storage health check failed", { error })
-    return {
-      status: "unhealthy",
-      error: error instanceof Error ? error.message : "Unknown error",
-      lastChecked: new Date().toISOString(),
     }
   }
 }
 
 export async function GET() {
+  const start = Date.now()
+
   try {
-    const [database, stackAuth, redis, email, storage] = await Promise.all([
+    logger.info("Health check requested")
+
+    // Run all health checks in parallel
+    const [databaseCheck, stackAuthCheck, redisCheck, externalAPIsCheck] = await Promise.all([
       checkDatabase(),
       checkStackAuth(),
       checkRedis(),
-      checkEmail(),
-      checkStorage(),
+      checkExternalAPIs(),
     ])
 
-    const services = {
-      database,
-      stackAuth,
-      ...(redis && { redis }),
-      ...(email && { email }),
-      ...(storage && { storage }),
-    }
+    const checks = [databaseCheck, stackAuthCheck, redisCheck, externalAPIsCheck]
 
     // Determine overall status
-    const serviceStatuses = Object.values(services).map((service) => service.status)
-    const hasUnhealthy = serviceStatuses.includes("unhealthy")
-    const hasNotConfigured = serviceStatuses.includes("not_configured")
+    const hasUnhealthy = checks.some((check) => check.status === "unhealthy")
+    const hasDegraded = checks.some((check) => check.status === "degraded")
 
     let overallStatus: "healthy" | "unhealthy" | "degraded"
     if (hasUnhealthy) {
       overallStatus = "unhealthy"
-    } else if (hasNotConfigured) {
+    } else if (hasDegraded) {
       overallStatus = "degraded"
     } else {
       overallStatus = "healthy"
     }
 
-    const healthCheck: HealthCheck = {
+    const healthData = {
       status: overallStatus,
       timestamp: new Date().toISOString(),
-      version: "1.0.0",
+      responseTime: Date.now() - start,
+      version: process.env.npm_package_version || "unknown",
       environment: env.NODE_ENV,
-      services,
-      uptime: Date.now() - startTime,
+      uptime: process.uptime(),
+      checks,
+      system: {
+        nodeVersion: process.version,
+        platform: process.platform,
+        arch: process.arch,
+        memory: {
+          used: Math.round((process.memoryUsage().heapUsed / 1024 / 1024) * 100) / 100,
+          total: Math.round((process.memoryUsage().heapTotal / 1024 / 1024) * 100) / 100,
+        },
+      },
     }
 
     const statusCode = overallStatus === "healthy" ? 200 : overallStatus === "degraded" ? 200 : 503
 
-    logger.info("Health check completed", { status: overallStatus, services: Object.keys(services) })
+    logger.info("Health check completed", {
+      status: overallStatus,
+      responseTime: Date.now() - start,
+    })
 
-    return NextResponse.json(healthCheck, { status: statusCode })
+    return NextResponse.json(healthData, { status: statusCode })
   } catch (error) {
-    logger.error("Health check failed", { error })
+    logger.error("Health check failed", { error: error instanceof Error ? error.message : String(error) })
+
     return NextResponse.json(
       {
         status: "unhealthy",
         timestamp: new Date().toISOString(),
+        responseTime: Date.now() - start,
         error: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 503 },

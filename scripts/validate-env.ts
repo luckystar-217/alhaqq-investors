@@ -1,156 +1,165 @@
 #!/usr/bin/env node
 
-import { env, stackAuthConfig, dbConfig, features } from "../lib/env"
-import { logger } from "../lib/logger"
+import { z } from "zod"
+import chalk from "chalk"
 
-interface ValidationResult {
-  category: string
-  status: "valid" | "missing" | "invalid"
-  message: string
-  required: boolean
-}
+// Environment validation schema (same as in lib/env.ts)
+const envSchema = z.object({
+  // Authentication
+  NEXTAUTH_SECRET: z.string().min(1, "NEXTAUTH_SECRET is required"),
+  NEXTAUTH_URL: z.string().url("NEXTAUTH_URL must be a valid URL").optional(),
 
-function validateEnvironment(): ValidationResult[] {
-  const results: ValidationResult[] = []
-
-  // Core Authentication
-  results.push({
-    category: "Authentication",
-    status: env.NEXTAUTH_SECRET ? "valid" : "missing",
-    message: env.NEXTAUTH_SECRET ? "NextAuth secret configured" : "NEXTAUTH_SECRET is required",
-    required: true,
-  })
-
-  results.push({
-    category: "Authentication",
-    status: env.NEXTAUTH_URL ? "valid" : "missing",
-    message: env.NEXTAUTH_URL ? `NextAuth URL: ${env.NEXTAUTH_URL}` : "NEXTAUTH_URL recommended for production",
-    required: false,
-  })
-
-  // Stack Auth
-  results.push({
-    category: "Stack Auth",
-    status: stackAuthConfig.projectId ? "valid" : "missing",
-    message: stackAuthConfig.projectId
-      ? `Stack Auth Project ID: ${stackAuthConfig.projectId}`
-      : "NEXT_PUBLIC_STACK_PROJECT_ID is required",
-    required: true,
-  })
-
-  results.push({
-    category: "Stack Auth",
-    status: stackAuthConfig.publishableClientKey ? "valid" : "missing",
-    message: stackAuthConfig.publishableClientKey
-      ? "Stack Auth publishable client key configured"
-      : "NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY is required",
-    required: true,
-  })
-
-  results.push({
-    category: "Stack Auth",
-    status: stackAuthConfig.secretServerKey ? "valid" : "missing",
-    message: stackAuthConfig.secretServerKey
-      ? "Stack Auth secret server key configured"
-      : "STACK_SECRET_SERVER_KEY is required",
-    required: true,
-  })
+  // Stack Auth Configuration
+  NEXT_PUBLIC_STACK_PROJECT_ID: z.string().min(1, "NEXT_PUBLIC_STACK_PROJECT_ID is required for Stack Auth"),
+  NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: z
+    .string()
+    .min(1, "NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY is required for Stack Auth"),
+  STACK_SECRET_SERVER_KEY: z.string().min(1, "STACK_SECRET_SERVER_KEY is required for Stack Auth"),
 
   // Database
-  results.push({
-    category: "Database",
-    status: dbConfig.url ? "valid" : "missing",
-    message: dbConfig.url ? "Database URL configured" : "DATABASE_URL is required",
-    required: true,
-  })
+  DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
 
-  // Optional Services
-  results.push({
-    category: "Redis",
-    status: env.REDIS_URL ? "valid" : "missing",
-    message: env.REDIS_URL ? "Redis configured" : "Redis not configured (optional)",
-    required: false,
-  })
+  // Security
+  JWT_SECRET: z.string().min(1, "JWT_SECRET is required").optional(),
+  ENCRYPTION_KEY: z.string().min(32, "ENCRYPTION_KEY must be at least 32 characters").optional(),
 
-  results.push({
-    category: "Email",
-    status: env.SMTP_HOST ? "valid" : "missing",
-    message: env.SMTP_HOST ? "Email service configured" : "Email service not configured (optional)",
-    required: false,
-  })
+  // Node Environment
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+})
 
-  results.push({
-    category: "Storage",
-    status: env.AWS_ACCESS_KEY_ID || env.UPLOADTHING_SECRET ? "valid" : "missing",
-    message:
-      env.AWS_ACCESS_KEY_ID || env.UPLOADTHING_SECRET
-        ? "File storage configured"
-        : "File storage not configured (optional)",
-    required: false,
-  })
+function validateEnvironment() {
+  console.log(chalk.blue("🔍 Validating environment variables...\n"))
 
-  return results
-}
+  try {
+    // Load environment variables
+    require("dotenv").config()
 
-function printValidationResults(results: ValidationResult[]) {
-  console.log("\n🔍 Environment Validation Results\n")
-  console.log("=".repeat(50))
+    const result = envSchema.safeParse(process.env)
 
-  const categories = [...new Set(results.map((r) => r.category))]
+    if (result.success) {
+      console.log(chalk.green("✅ Environment validation passed!"))
+      console.log(chalk.gray("All required environment variables are properly configured.\n"))
 
-  categories.forEach((category) => {
-    console.log(`\n📁 ${category}`)
-    console.log("-".repeat(category.length + 3))
+      // Show configuration summary
+      console.log(chalk.blue("📋 Configuration Summary:"))
+      console.log(chalk.gray("─".repeat(50)))
+      console.log(`${chalk.cyan("Environment:")} ${result.data.NODE_ENV}`)
+      console.log(`${chalk.cyan("NextAuth Secret:")} ${result.data.NEXTAUTH_SECRET ? "✅ Set" : "❌ Missing"}`)
+      console.log(`${chalk.cyan("Stack Auth Project:")} ${result.data.NEXT_PUBLIC_STACK_PROJECT_ID}`)
+      console.log(`${chalk.cyan("Database:")} ${result.data.DATABASE_URL ? "✅ Configured" : "❌ Missing"}`)
+      console.log(`${chalk.cyan("JWT Secret:")} ${result.data.JWT_SECRET ? "✅ Set" : "⚠️  Using fallback"}`)
+      console.log(`${chalk.cyan("Encryption Key:")} ${result.data.ENCRYPTION_KEY ? "✅ Set" : "⚠️  Using fallback"}`)
 
-    const categoryResults = results.filter((r) => r.category === category)
-    categoryResults.forEach((result) => {
-      const icon = result.status === "valid" ? "✅" : result.required ? "❌" : "⚠️"
-      const status = result.status === "valid" ? "VALID" : result.status === "missing" ? "MISSING" : "INVALID"
+      return true
+    } else {
+      console.log(chalk.red("❌ Environment validation failed!"))
+      console.log(chalk.gray("The following issues were found:\n"))
 
-      console.log(`  ${icon} ${status.padEnd(8)} ${result.message}`)
-    })
-  })
+      result.error.errors.forEach((error, index) => {
+        console.log(`${chalk.red(`${index + 1}.`)} ${chalk.yellow(error.path.join("."))}`)
+        console.log(`   ${chalk.gray("→")} ${error.message}\n`)
+      })
 
-  // Summary
-  const validCount = results.filter((r) => r.status === "valid").length
-  const missingRequired = results.filter((r) => r.status !== "valid" && r.required).length
-  const missingOptional = results.filter((r) => r.status !== "valid" && !r.required).length
+      console.log(chalk.blue("💡 Suggestions:"))
+      console.log(chalk.gray("─".repeat(50)))
 
-  console.log("\n📊 Summary")
-  console.log("-".repeat(10))
-  console.log(`✅ Valid configurations: ${validCount}`)
-  console.log(`❌ Missing required: ${missingRequired}`)
-  console.log(`⚠️  Missing optional: ${missingOptional}`)
+      result.error.errors.forEach((error) => {
+        const field = error.path.join(".")
+        switch (field) {
+          case "NEXTAUTH_SECRET":
+            console.log(`• Generate a secret: ${chalk.cyan("openssl rand -base64 32")}`)
+            break
+          case "DATABASE_URL":
+            console.log(`• Set up your Neon database and copy the connection string`)
+            break
+          case "NEXT_PUBLIC_STACK_PROJECT_ID":
+            console.log(`• Copy from your Stack Auth dashboard`)
+            break
+          case "JWT_SECRET":
+            console.log(`• Generate a JWT secret: ${chalk.cyan("openssl rand -base64 32")}`)
+            break
+          case "ENCRYPTION_KEY":
+            console.log(`• Generate a 32+ character encryption key`)
+            break
+          default:
+            console.log(`• Check the .env.example file for ${field} format`)
+        }
+      })
 
-  // Feature Status
-  console.log("\n🚀 Feature Status")
-  console.log("-".repeat(15))
-  console.log(`🔐 Social Login: ${features.socialLogin ? "Enabled" : "Disabled"}`)
-  console.log(`📧 Email Verification: ${features.emailVerification ? "Enabled" : "Disabled"}`)
-  console.log(`🔒 Two-Factor Auth: ${features.twoFactorAuth ? "Enabled" : "Disabled"}`)
-  console.log(`📈 Investment Tracking: ${features.investmentTracking ? "Enabled" : "Disabled"}`)
-  console.log(`🔄 Real-time Updates: ${features.realTimeUpdates ? "Enabled" : "Disabled"}`)
-  console.log(`🚧 Maintenance Mode: ${features.maintenanceMode ? "Enabled" : "Disabled"}`)
-
-  if (missingRequired > 0) {
-    console.log("\n❌ Validation Failed")
-    console.log("Please configure the missing required environment variables.")
-    console.log("Copy .env.example to .env and fill in the required values.")
-    process.exit(1)
-  } else {
-    console.log("\n✅ Validation Passed")
-    console.log("All required environment variables are configured.")
+      return false
+    }
+  } catch (error) {
+    console.log(chalk.red("❌ Failed to validate environment:"))
+    console.log(chalk.gray(error instanceof Error ? error.message : String(error)))
+    return false
   }
 }
 
-// Run validation
-try {
-  logger.info("Starting environment validation...")
-  const results = validateEnvironment()
-  printValidationResults(results)
-} catch (error) {
-  logger.error("Environment validation failed", { error })
-  console.error("\n❌ Environment validation failed with error:")
-  console.error(error)
-  process.exit(1)
+function checkStackAuthConfiguration() {
+  console.log(chalk.blue("\n🔐 Checking Stack Auth configuration..."))
+
+  const projectId = process.env.NEXT_PUBLIC_STACK_PROJECT_ID
+  const clientKey = process.env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY
+  const serverKey = process.env.STACK_SECRET_SERVER_KEY
+
+  if (!projectId || !clientKey || !serverKey) {
+    console.log(chalk.yellow("⚠️  Stack Auth not fully configured"))
+    return false
+  }
+
+  console.log(chalk.green("✅ Stack Auth configuration looks good"))
+  console.log(`${chalk.cyan("Project ID:")} ${projectId}`)
+  console.log(`${chalk.cyan("Client Key:")} ${clientKey.substring(0, 20)}...`)
+  console.log(`${chalk.cyan("Server Key:")} ${serverKey.substring(0, 20)}...`)
+
+  return true
 }
+
+function checkDatabaseConfiguration() {
+  console.log(chalk.blue("\n🗄️  Checking database configuration..."))
+
+  const databaseUrl = process.env.DATABASE_URL
+
+  if (!databaseUrl) {
+    console.log(chalk.red("❌ DATABASE_URL not configured"))
+    return false
+  }
+
+  try {
+    const url = new URL(databaseUrl)
+    console.log(chalk.green("✅ Database URL format is valid"))
+    console.log(`${chalk.cyan("Host:")} ${url.hostname}`)
+    console.log(`${chalk.cyan("Database:")} ${url.pathname.substring(1)}`)
+    console.log(`${chalk.cyan("SSL Mode:")} ${url.searchParams.get("sslmode") || "default"}`)
+    return true
+  } catch (error) {
+    console.log(chalk.red("❌ Invalid database URL format"))
+    return false
+  }
+}
+
+function main() {
+  console.log(chalk.bold.blue("🚀 AlHaqq Investors - Environment Validation"))
+  console.log(chalk.gray("=".repeat(60)))
+
+  const validationPassed = validateEnvironment()
+  const stackAuthOk = checkStackAuthConfiguration()
+  const databaseOk = checkDatabaseConfiguration()
+
+  console.log(chalk.blue("\n📊 Validation Summary:"))
+  console.log(chalk.gray("─".repeat(50)))
+  console.log(`${chalk.cyan("Environment Variables:")} ${validationPassed ? "✅ Pass" : "❌ Fail"}`)
+  console.log(`${chalk.cyan("Stack Auth Setup:")} ${stackAuthOk ? "✅ Pass" : "⚠️  Incomplete"}`)
+  console.log(`${chalk.cyan("Database Setup:")} ${databaseOk ? "✅ Pass" : "❌ Fail"}`)
+
+  if (validationPassed && stackAuthOk && databaseOk) {
+    console.log(chalk.green("\n🎉 All checks passed! Your environment is ready."))
+    process.exit(0)
+  } else {
+    console.log(chalk.yellow("\n⚠️  Some issues found. Please review and fix before deployment."))
+    process.exit(1)
+  }
+}
+
+// Run the validation
+main()

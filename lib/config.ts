@@ -3,33 +3,39 @@ import { env } from "./env"
 export const config = {
   app: {
     name: env.APP_NAME,
-    url: env.APP_URL || "http://localhost:3000",
     env: env.APP_ENV,
+    url: env.APP_URL || "http://localhost:3000",
+    port: process.env.PORT || 3000,
   },
   auth: {
     secret: env.NEXTAUTH_SECRET,
     url: env.NEXTAUTH_URL || "http://localhost:3000",
-  },
-  database: {
-    url: env.DATABASE_URL,
-    maxConnections: 10,
-    connectionTimeout: 30000,
+    sessionMaxAge: 30 * 24 * 60 * 60, // 30 days
   },
   stackAuth: {
     projectId: env.NEXT_PUBLIC_STACK_PROJECT_ID,
     publishableClientKey: env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY,
     secretServerKey: env.STACK_SECRET_SERVER_KEY,
+    jwksUrl: `https://api.stack-auth.com/api/v1/projects/${env.NEXT_PUBLIC_STACK_PROJECT_ID}/.well-known/jwks.json`,
+  },
+  database: {
+    url: env.DATABASE_URL,
+    maxConnections: 10,
+    connectionTimeout: 30000,
+    idleTimeout: 600000,
   },
   redis: {
     url: env.REDIS_URL,
     password: env.REDIS_PASSWORD,
+    maxRetries: 3,
+    retryDelay: 1000,
   },
   email: {
     host: env.SMTP_HOST,
     port: env.SMTP_PORT || 587,
     user: env.SMTP_USER,
     password: env.SMTP_PASSWORD,
-    from: env.FROM_EMAIL,
+    from: env.FROM_EMAIL || "noreply@alhaqq.com",
     fromName: env.FROM_NAME,
   },
   storage: {
@@ -45,13 +51,11 @@ export const config = {
     },
   },
   apis: {
-    financialData: {
+    financial: {
       apiKey: env.FINANCIAL_DATA_API_KEY,
     },
-    marketData: {
-      url: env.MARKET_DATA_API_URL,
-    },
-    investment: {
+    market: {
+      apiUrl: env.MARKET_DATA_API_URL,
       apiKey: env.INVESTMENT_API_KEY,
     },
     crypto: {
@@ -77,14 +81,18 @@ export const config = {
     sentryDsn: env.SENTRY_DSN,
     mixpanelToken: env.MIXPANEL_TOKEN,
   },
-  rateLimit: {
-    maxRequests: env.RATE_LIMIT_MAX_REQUESTS,
-    windowMs: env.RATE_LIMIT_WINDOW_MS,
-  },
   security: {
-    encryptionKey: env.ENCRYPTION_KEY,
     jwtSecret: env.JWT_SECRET,
+    encryptionKey: env.ENCRYPTION_KEY,
     corsOrigin: env.CORS_ORIGIN,
+  },
+  rateLimit: {
+    windowMs: env.RATE_LIMIT_WINDOW_MS,
+    maxRequests: env.RATE_LIMIT_MAX_REQUESTS,
+  },
+  fileUpload: {
+    maxSize: env.MAX_FILE_SIZE,
+    allowedTypes: env.ALLOWED_FILE_TYPES.split(",").map((type) => type.trim()),
   },
   features: {
     socialLogin: env.ENABLE_SOCIAL_LOGIN,
@@ -94,8 +102,14 @@ export const config = {
     realTimeUpdates: env.ENABLE_REAL_TIME_UPDATES,
     maintenanceMode: env.MAINTENANCE_MODE,
   },
-  files: {
-    maxSize: env.MAX_FILE_SIZE,
-    allowedTypes: env.ALLOWED_FILE_TYPES.split(",").map((type) => type.trim()),
+  webhooks: {
+    stripe: {
+      secret: env.STRIPE_WEBHOOK_SECRET,
+    },
+    payment: {
+      url: env.PAYMENT_WEBHOOK_URL,
+    },
   },
 }
+
+export default config

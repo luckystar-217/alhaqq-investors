@@ -1,66 +1,108 @@
-type LogLevel = "debug" | "info" | "warn" | "error"
+import { env } from "./env"
+
+type LogLevel = "error" | "warn" | "info" | "debug"
 
 interface LogEntry {
   level: LogLevel
   message: string
   timestamp: string
   data?: any
+  error?: Error
 }
 
 class Logger {
   private logLevel: LogLevel
 
-  constructor(logLevel: LogLevel = "info") {
-    this.logLevel = logLevel
+  constructor() {
+    this.logLevel = env.LOG_LEVEL
   }
 
   private shouldLog(level: LogLevel): boolean {
     const levels: Record<LogLevel, number> = {
-      debug: 0,
-      info: 1,
-      warn: 2,
-      error: 3,
+      error: 0,
+      warn: 1,
+      info: 2,
+      debug: 3,
     }
-    return levels[level] >= levels[this.logLevel]
+    return levels[level] <= levels[this.logLevel]
   }
 
-  private formatLog(level: LogLevel, message: string, data?: any): LogEntry {
-    return {
+  private formatLog(entry: LogEntry): string {
+    const { level, message, timestamp, data, error } = entry
+    let logMessage = `[${timestamp}] ${level.toUpperCase()}: ${message}`
+
+    if (data) {
+      logMessage += ` | Data: ${JSON.stringify(data, null, 2)}`
+    }
+
+    if (error) {
+      logMessage += ` | Error: ${error.message}`
+      if (error.stack && env.NODE_ENV === "development") {
+        logMessage += `\nStack: ${error.stack}`
+      }
+    }
+
+    return logMessage
+  }
+
+  private log(level: LogLevel, message: string, data?: any, error?: Error): void {
+    if (!this.shouldLog(level)) return
+
+    const entry: LogEntry = {
       level,
       message,
       timestamp: new Date().toISOString(),
       data,
+      error,
+    }
+
+    const formattedLog = this.formatLog(entry)
+
+    switch (level) {
+      case "error":
+        console.error(formattedLog)
+        break
+      case "warn":
+        console.warn(formattedLog)
+        break
+      case "info":
+        console.info(formattedLog)
+        break
+      case "debug":
+        console.debug(formattedLog)
+        break
+    }
+
+    // In production, you might want to send logs to an external service
+    if (env.NODE_ENV === "production" && level === "error") {
+      // Send to error tracking service (e.g., Sentry)
+      this.sendToErrorTracking(entry)
     }
   }
 
-  debug(message: string, data?: any) {
-    if (this.shouldLog("debug")) {
-      const logEntry = this.formatLog("debug", message, data)
-      console.debug(`[DEBUG] ${logEntry.timestamp} - ${message}`, data || "")
+  private sendToErrorTracking(entry: LogEntry): void {
+    // Implement error tracking service integration
+    // e.g., Sentry, LogRocket, etc.
+    if (env.SENTRY_DSN) {
+      // Send to Sentry
     }
   }
 
-  info(message: string, data?: any) {
-    if (this.shouldLog("info")) {
-      const logEntry = this.formatLog("info", message, data)
-      console.info(`[INFO] ${logEntry.timestamp} - ${message}`, data || "")
-    }
+  error(message: string, data?: any, error?: Error): void {
+    this.log("error", message, data, error)
   }
 
-  warn(message: string, data?: any) {
-    if (this.shouldLog("warn")) {
-      const logEntry = this.formatLog("warn", message, data)
-      console.warn(`[WARN] ${logEntry.timestamp} - ${message}`, data || "")
-    }
+  warn(message: string, data?: any): void {
+    this.log("warn", message, data)
   }
 
-  error(message: string, data?: any) {
-    if (this.shouldLog("error")) {
-      const logEntry = this.formatLog("error", message, data)
-      console.error(`[ERROR] ${logEntry.timestamp} - ${message}`, data || "")
-    }
+  info(message: string, data?: any): void {
+    this.log("info", message, data)
+  }
+
+  debug(message: string, data?: any): void {
+    this.log("debug", message, data)
   }
 }
 
-// Create and export logger instance
-export const logger = new Logger((process.env.LOG_LEVEL as LogLevel) || "info")
+export const logger = new Logger()
