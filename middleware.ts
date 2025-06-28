@@ -49,11 +49,6 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // Skip middleware for static files
-  if (pathname.includes(".") && !pathname.startsWith("/api/")) {
-    return NextResponse.next()
-  }
-
   // Handle maintenance mode
   if (env.MAINTENANCE_MODE && pathname !== "/maintenance") {
     return NextResponse.redirect(new URL("/maintenance", request.url))

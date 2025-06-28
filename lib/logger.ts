@@ -1,97 +1,76 @@
-type LogLevel = "error" | "warn" | "info" | "debug"
+import { env } from "./env"
 
-interface LogEntry {
-  level: LogLevel
-  message: string
-  timestamp: string
-  context?: Record<string, unknown>
-  error?: Error
+export enum LogLevel {
+  ERROR = 0,
+  WARN = 1,
+  INFO = 2,
+  DEBUG = 3,
+}
+
+const logLevelMap: Record<string, LogLevel> = {
+  error: LogLevel.ERROR,
+  warn: LogLevel.WARN,
+  info: LogLevel.INFO,
+  debug: LogLevel.DEBUG,
 }
 
 class Logger {
   private level: LogLevel
 
-  constructor(level: LogLevel = "info") {
-    this.level = level
+  constructor() {
+    this.level = logLevelMap[env.LOG_LEVEL] ?? LogLevel.INFO
   }
 
   private shouldLog(level: LogLevel): boolean {
-    const levels: Record<LogLevel, number> = {
-      error: 0,
-      warn: 1,
-      info: 2,
-      debug: 3,
-    }
-    return levels[level] <= levels[this.level]
+    return level <= this.level
   }
 
-  private formatLog(entry: LogEntry): string {
-    const { level, message, timestamp, context, error } = entry
-    let log = `[${timestamp}] ${level.toUpperCase()}: ${message}`
-
-    if (context && Object.keys(context).length > 0) {
-      log += ` | Context: ${JSON.stringify(context)}`
-    }
-
-    if (error) {
-      log += ` | Error: ${error.message}`
-      if (error.stack) {
-        log += `\nStack: ${error.stack}`
-      }
-    }
-
-    return log
+  private formatMessage(level: string, message: string, meta?: any): string {
+    const timestamp = new Date().toISOString()
+    const metaStr = meta ? ` ${JSON.stringify(meta)}` : ""
+    return `[${timestamp}] ${level.toUpperCase()}: ${message}${metaStr}`
   }
 
-  private log(level: LogLevel, message: string, context?: Record<string, unknown>, error?: Error): void {
-    if (!this.shouldLog(level)) return
-
-    const entry: LogEntry = {
-      level,
-      message,
-      timestamp: new Date().toISOString(),
-      context,
-      error,
-    }
-
-    const formattedLog = this.formatLog(entry)
-
-    switch (level) {
-      case "error":
-        console.error(formattedLog)
-        break
-      case "warn":
-        console.warn(formattedLog)
-        break
-      case "info":
-        console.info(formattedLog)
-        break
-      case "debug":
-        console.debug(formattedLog)
-        break
+  error(message: string, meta?: any): void {
+    if (this.shouldLog(LogLevel.ERROR)) {
+      console.error(this.formatMessage("error", message, meta))
     }
   }
 
-  error(message: string, context?: Record<string, unknown>, error?: Error): void {
-    this.log("error", message, context, error)
+  warn(message: string, meta?: any): void {
+    if (this.shouldLog(LogLevel.WARN)) {
+      console.warn(this.formatMessage("warn", message, meta))
+    }
   }
 
-  warn(message: string, context?: Record<string, unknown>): void {
-    this.log("warn", message, context)
+  info(message: string, meta?: any): void {
+    if (this.shouldLog(LogLevel.INFO)) {
+      console.info(this.formatMessage("info", message, meta))
+    }
   }
 
-  info(message: string, context?: Record<string, unknown>): void {
-    this.log("info", message, context)
+  debug(message: string, meta?: any): void {
+    if (this.shouldLog(LogLevel.DEBUG)) {
+      console.debug(this.formatMessage("debug", message, meta))
+    }
   }
 
-  debug(message: string, context?: Record<string, unknown>): void {
-    this.log("debug", message, context)
+  // Environment-specific logging
+  envError(message: string, meta?: any): void {
+    this.error(`[ENV] ${message}`, meta)
+  }
+
+  configError(message: string, meta?: any): void {
+    this.error(`[CONFIG] ${message}`, meta)
+  }
+
+  dbError(message: string, meta?: any): void {
+    this.error(`[DATABASE] ${message}`, meta)
+  }
+
+  apiError(message: string, meta?: any): void {
+    this.error(`[API] ${message}`, meta)
   }
 }
 
-// Create and export logger instance
-const logLevel = (process.env.LOG_LEVEL as LogLevel) || "info"
-export const logger = new Logger(logLevel)
-
-// Export types for use in other modules
-export type { LogLevel, LogEntry }
+export const logger = new Logger()
