@@ -1,62 +1,51 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { getServerAuthSession } from "@/lib/auth"
-import { getUserPortfolios, createPortfolio, getUserByEmail } from "@/lib/database"
+import { Database } from "@/lib/database"
 import { logger } from "@/lib/logger"
-
-export async function GET(request: NextRequest) {
-  try {
-    const session = await getServerAuthSession()
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-
-    const user = await getUserByEmail(session.user.email!)
-    if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 })
-    }
-
-    const portfolios = await getUserPortfolios(user.id)
-
-    return NextResponse.json({ portfolios })
-  } catch (error) {
-    logger.error("Error fetching portfolios", { error })
-    return NextResponse.json({ error: "Failed to fetch portfolios" }, { status: 500 })
-  }
-}
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerAuthSession()
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-
     const body = await request.json()
-    const { name, description, portfolioType, riskLevel, isPublic } = body
+    const { user_id, name, description } = body
 
-    if (!name?.trim()) {
-      return NextResponse.json({ error: "Portfolio name is required" }, { status: 400 })
+    // Validate required fields
+    if (!user_id || !name) {
+      return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
     }
 
-    const user = await getUserByEmail(session.user.email!)
-    if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 })
-    }
-
-    const portfolio = await createPortfolio({
-      userId: user.id,
-      name: name.trim(),
+    // Create portfolio
+    const portfolio = await Database.createPortfolio({
+      user_id,
+      name,
       description,
-      portfolioType,
-      riskLevel,
-      isPublic,
     })
 
-    logger.info("Portfolio created successfully", { portfolioId: portfolio.id, userId: user.id })
+    if (!portfolio) {
+      return NextResponse.json({ error: "Failed to create portfolio" }, { status: 500 })
+    }
 
-    return NextResponse.json(portfolio, { status: 201 })
+    logger.info("Portfolio created successfully", { portfolioId: portfolio.id, userId: user_id })
+
+    return NextResponse.json({ portfolio })
   } catch (error) {
-    logger.error("Error creating portfolio", { error })
-    return NextResponse.json({ error: "Failed to create portfolio" }, { status: 500 })
+    logger.error("Portfolio creation failed", {}, error as Error)
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+  }
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const userId = searchParams.get("user_id")
+
+    if (!userId) {
+      return NextResponse.json({ error: "User ID parameter required" }, { status: 400 })
+    }
+
+    const portfolios = await Database.getUserPortfolios(userId)
+
+    return NextResponse.json({ portfolios })
+  } catch (error) {
+    logger.error("Portfolios fetch failed", {}, error as Error)
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }

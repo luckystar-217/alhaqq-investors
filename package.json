@@ -1,18 +1,19 @@
 {
-  "name": "my-v0-project",
+  "name": "alhaqq-investors",
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "npm run validate-env && next build",
-    "dev": "npm run validate-env && next dev",
+    "build": "next build",
+    "dev": "next dev",
     "lint": "next lint",
-    "start": "npm run validate-env && next start",
-    "validate-env": "tsx scripts/validate-env.ts"
+    "start": "next start",
+    "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^0.0.66",
     "@auth/core": "latest",
-    "@hookform/resolvers": "^3.9.1",
     "@neondatabase/serverless": "latest",
+    "@next/font": "^14.0.0",
     "@radix-ui/react-accordion": "latest",
     "@radix-ui/react-alert-dialog": "latest",
     "@radix-ui/react-aspect-ratio": "latest",
@@ -32,6 +33,7 @@
     "@radix-ui/react-scroll-area": "latest",
     "@radix-ui/react-select": "latest",
     "@radix-ui/react-separator": "latest",
+    "@radix-ui/react-sheet": "^1.0.4",
     "@radix-ui/react-slider": "latest",
     "@radix-ui/react-slot": "latest",
     "@radix-ui/react-switch": "latest",
@@ -40,8 +42,11 @@
     "@radix-ui/react-toggle": "latest",
     "@radix-ui/react-toggle-group": "latest",
     "@radix-ui/react-tooltip": "latest",
+    "@stack-auth/next": "^2.5.10",
     "@stackframe/stack": "latest",
-    "autoprefixer": "^10.4.20",
+    "@tailwindcss/forms": "^0.5.7",
+    "@tailwindcss/typography": "^0.5.10",
+    "ai": "^3.4.32",
     "bcryptjs": "latest",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -49,6 +54,7 @@
     "crypto": "latest",
     "date-fns": "latest",
     "embla-carousel-react": "latest",
+    "framer-motion": "^10.16.16",
     "input-otp": "latest",
     "lucide-react": "^0.454.0",
     "next": "14.2.16",
@@ -68,12 +74,15 @@
     "zod": "latest"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "autoprefixer": "^10.4.16",
+    "eslint": "^8.56.0",
+    "eslint-config-next": "14.0.4",
     "postcss": "^8.5",
-    "tailwindcss": "^3.4.17",
-    "tsx": "^4.7.0",
+    "tailwindcss": "^3.3.6",
     "typescript": "^5"
   }
 }

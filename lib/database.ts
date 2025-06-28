@@ -1,416 +1,232 @@
 import { neon } from "@neondatabase/serverless"
-import { dbConfig } from "./env"
+import { env } from "./env"
 import { logger } from "./logger"
-import { DatabaseConnectionError } from "./error-handler"
 
-// Initialize Neon SQL client
-let sql: ReturnType<typeof neon> | null = null
+// Initialize Neon client
+const sql = neon(env.DATABASE_URL)
 
-try {
-  if (!dbConfig.url) {
-    throw new Error("DATABASE_URL is required")
-  }
-  sql = neon(dbConfig.url)
-  logger.info("Database client initialized successfully")
-} catch (error) {
-  logger.error("Failed to initialize database client", { error })
-  if (process.env.NODE_ENV === "production") {
-    throw error
-  }
-}
-
-export function getSQL() {
-  if (!sql) {
-    throw new DatabaseConnectionError("Database client is not initialized")
-  }
-  return sql
-}
-
-// Database health check
-export async function checkDatabaseHealth(): Promise<{
-  connected: boolean
-  latency?: number
-  error?: string
-}> {
-  if (!sql) {
-    return { connected: false, error: "SQL client not initialized" }
-  }
-
-  try {
-    const startTime = Date.now()
-    await sql`SELECT 1 as health_check`
-    const latency = Date.now() - startTime
-
-    return { connected: true, latency }
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown database error"
-    logger.error("Database health check failed", { error: errorMessage })
-    return { connected: false, error: errorMessage }
-  }
-}
-
-// User operations
-export async function createUser(userData: {
+export interface User {
+  id: string
   email: string
-  username?: string
-  passwordHash?: string
-  fullName?: string
-  avatarUrl?: string
-  stackUserId?: string
-}) {
-  const sql = getSQL()
-
-  const [user] = await sql`
-    INSERT INTO users (email, username, password_hash, full_name, avatar_url, stack_user_id, email_verified)
-    VALUES (${userData.email}, ${userData.username}, ${userData.passwordHash}, ${userData.fullName}, ${userData.avatarUrl}, ${userData.stackUserId}, true)
-    RETURNING *
-  `
-
-  return user
+  name: string
+  username: string
+  avatar_url?: string
+  bio?: string
+  location?: string
+  website?: string
+  created_at: Date
+  updated_at: Date
 }
 
-export async function getUserByEmail(email: string) {
-  const sql = getSQL()
-
-  const [user] = await sql`
-    SELECT u.*, up.bio, up.location, up.website_url, up.occupation, up.cover_image_url
-    FROM users u
-    LEFT JOIN user_profiles up ON u.id = up.user_id
-    WHERE u.email = ${email}
-  `
-
-  return user
-}
-
-export async function getUserById(id: string) {
-  const sql = getSQL()
-
-  const [user] = await sql`
-    SELECT u.*, up.bio, up.location, up.website_url, up.occupation, up.cover_image_url,
-           us.post_count, us.follower_count, us.following_count, us.portfolio_count, us.total_portfolio_value
-    FROM users u
-    LEFT JOIN user_profiles up ON u.id = up.user_id
-    LEFT JOIN user_stats us ON u.id = us.id
-    WHERE u.id = ${id}
-  `
-
-  return user
-}
-
-// Post operations
-export async function createPost(postData: {
-  userId: string
+export interface Post {
+  id: string
+  user_id: string
   content: string
-  images?: string[]
-  postType?: string
-  tags?: string[]
-}) {
-  const sql = getSQL()
-
-  const [post] = await sql`
-    INSERT INTO posts (user_id, content, images, post_type, tags)
-    VALUES (${postData.userId}, ${postData.content}, ${postData.images || []}, ${postData.postType || "general"}, ${postData.tags || []})
-    RETURNING *
-  `
-
-  return post
+  image_url?: string
+  likes_count: number
+  comments_count: number
+  created_at: Date
+  updated_at: Date
+  user?: User
 }
 
-export async function getPosts(limit = 20, offset = 0) {
-  const sql = getSQL()
-
-  const posts = await sql`
-    SELECT p.*, u.full_name, u.username, u.avatar_url, u.is_verified
-    FROM posts p
-    JOIN users u ON p.user_id = u.id
-    WHERE p.is_public = true
-    ORDER BY p.created_at DESC
-    LIMIT ${limit} OFFSET ${offset}
-  `
-
-  return posts
-}
-
-export async function getPostById(id: string) {
-  const sql = getSQL()
-
-  const [post] = await sql`
-    SELECT p.*, u.full_name, u.username, u.avatar_url, u.is_verified
-    FROM posts p
-    JOIN users u ON p.user_id = u.id
-    WHERE p.id = ${id}
-  `
-
-  return post
-}
-
-export async function likePost(postId: string, userId: string) {
-  const sql = getSQL()
-
-  try {
-    await sql`BEGIN`
-
-    // Insert like
-    await sql`
-      INSERT INTO post_likes (post_id, user_id)
-      VALUES (${postId}, ${userId})
-      ON CONFLICT (post_id, user_id) DO NOTHING
-    `
-
-    // Update like count
-    await sql`
-      UPDATE posts 
-      SET like_count = (SELECT COUNT(*) FROM post_likes WHERE post_id = ${postId})
-      WHERE id = ${postId}
-    `
-
-    await sql`COMMIT`
-
-    const [updatedPost] = await sql`
-      SELECT like_count FROM posts WHERE id = ${postId}
-    `
-
-    return updatedPost
-  } catch (error) {
-    await sql`ROLLBACK`
-    throw error
-  }
-}
-
-export async function unlikePost(postId: string, userId: string) {
-  const sql = getSQL()
-
-  try {
-    await sql`BEGIN`
-
-    // Remove like
-    await sql`
-      DELETE FROM post_likes 
-      WHERE post_id = ${postId} AND user_id = ${userId}
-    `
-
-    // Update like count
-    await sql`
-      UPDATE posts 
-      SET like_count = (SELECT COUNT(*) FROM post_likes WHERE post_id = ${postId})
-      WHERE id = ${postId}
-    `
-
-    await sql`COMMIT`
-
-    const [updatedPost] = await sql`
-      SELECT like_count FROM posts WHERE id = ${postId}
-    `
-
-    return updatedPost
-  } catch (error) {
-    await sql`ROLLBACK`
-    throw error
-  }
-}
-
-// Portfolio operations
-export async function getUserPortfolios(userId: string) {
-  const sql = getSQL()
-
-  const portfolios = await sql`
-    SELECT p.*, pp.holding_count, pp.avg_holding_return
-    FROM portfolios p
-    LEFT JOIN portfolio_performance pp ON p.id = pp.id
-    WHERE p.user_id = ${userId}
-    ORDER BY p.created_at DESC
-  `
-
-  return portfolios
-}
-
-export async function getPortfolioById(id: string) {
-  const sql = getSQL()
-
-  const [portfolio] = await sql`
-    SELECT p.*, u.full_name as owner_name, u.username as owner_username
-    FROM portfolios p
-    JOIN users u ON p.user_id = u.id
-    WHERE p.id = ${id}
-  `
-
-  return portfolio
-}
-
-export async function getPortfolioHoldings(portfolioId: string) {
-  const sql = getSQL()
-
-  const holdings = await sql`
-    SELECT h.*, md.change_24h, md.change_percentage_24h
-    FROM holdings h
-    LEFT JOIN market_data md ON h.symbol = md.symbol
-    WHERE h.portfolio_id = ${portfolioId}
-    ORDER BY h.market_value DESC
-  `
-
-  return holdings
-}
-
-export async function createPortfolio(portfolioData: {
-  userId: string
+export interface Portfolio {
+  id: string
+  user_id: string
   name: string
   description?: string
-  portfolioType?: string
-  riskLevel?: string
-  isPublic?: boolean
-}) {
-  const sql = getSQL()
-
-  const [portfolio] = await sql`
-    INSERT INTO portfolios (user_id, name, description, portfolio_type, risk_level, is_public)
-    VALUES (${portfolioData.userId}, ${portfolioData.name}, ${portfolioData.description}, 
-            ${portfolioData.portfolioType || "personal"}, ${portfolioData.riskLevel || "moderate"}, 
-            ${portfolioData.isPublic || false})
-    RETURNING *
-  `
-
-  return portfolio
+  total_value: number
+  created_at: Date
+  updated_at: Date
 }
 
-// Follow operations
-export async function followUser(followerId: string, followingId: string) {
-  const sql = getSQL()
-
-  await sql`
-    INSERT INTO user_follows (follower_id, following_id)
-    VALUES (${followerId}, ${followingId})
-    ON CONFLICT (follower_id, following_id) DO NOTHING
-  `
-}
-
-export async function unfollowUser(followerId: string, followingId: string) {
-  const sql = getSQL()
-
-  await sql`
-    DELETE FROM user_follows 
-    WHERE follower_id = ${followerId} AND following_id = ${followingId}
-  `
-}
-
-export async function isFollowing(followerId: string, followingId: string) {
-  const sql = getSQL()
-
-  const [result] = await sql`
-    SELECT EXISTS(
-      SELECT 1 FROM user_follows 
-      WHERE follower_id = ${followerId} AND following_id = ${followingId}
-    ) as is_following
-  `
-
-  return result.is_following
-}
-
-// Market data operations
-export async function updateMarketData(marketData: {
+export interface Holding {
+  id: string
+  portfolio_id: string
   symbol: string
-  name?: string
-  currentPrice: number
-  change24h?: number
-  changePercentage24h?: number
-  marketCap?: number
-  volume24h?: number
-  high24h?: number
-  low24h?: number
-  assetType?: string
-}) {
-  const sql = getSQL()
-
-  await sql`
-    INSERT INTO market_data (symbol, name, current_price, change_24h, change_percentage_24h, 
-                           market_cap, volume_24h, high_24h, low_24h, asset_type, last_updated)
-    VALUES (${marketData.symbol}, ${marketData.name}, ${marketData.currentPrice}, 
-            ${marketData.change24h}, ${marketData.changePercentage24h}, ${marketData.marketCap},
-            ${marketData.volume24h}, ${marketData.high24h}, ${marketData.low24h}, 
-            ${marketData.assetType}, NOW())
-    ON CONFLICT (symbol) DO UPDATE SET
-      current_price = EXCLUDED.current_price,
-      change_24h = EXCLUDED.change_24h,
-      change_percentage_24h = EXCLUDED.change_percentage_24h,
-      market_cap = EXCLUDED.market_cap,
-      volume_24h = EXCLUDED.volume_24h,
-      high_24h = EXCLUDED.high_24h,
-      low_24h = EXCLUDED.low_24h,
-      last_updated = NOW()
-  `
+  quantity: number
+  purchase_price: number
+  current_price: number
+  created_at: Date
+  updated_at: Date
 }
 
-export async function getMarketData(symbols?: string[]) {
-  const sql = getSQL()
-
-  if (symbols && symbols.length > 0) {
-    return await sql`
-      SELECT * FROM market_data 
-      WHERE symbol = ANY(${symbols})
-      ORDER BY symbol
-    `
+// Database operations
+export class Database {
+  static async testConnection(): Promise<boolean> {
+    try {
+      await sql`SELECT 1`
+      return true
+    } catch (error) {
+      logger.error("Database connection failed", {}, error as Error)
+      return false
+    }
   }
 
-  return await sql`
-    SELECT * FROM market_data 
-    ORDER BY market_cap DESC NULLS LAST
-    LIMIT 50
-  `
-}
+  // User operations
+  static async createUser(userData: {
+    email: string
+    name: string
+    username: string
+    password_hash: string
+  }): Promise<User | null> {
+    try {
+      const [user] = await sql`
+        INSERT INTO users (email, name, username, password_hash)
+        VALUES (${userData.email}, ${userData.name}, ${userData.username}, ${userData.password_hash})
+        RETURNING id, email, name, username, avatar_url, bio, location, website, created_at, updated_at
+      `
+      return user as User
+    } catch (error) {
+      logger.error("Failed to create user", { email: userData.email }, error as Error)
+      return null
+    }
+  }
 
-// Investment strategies
-export async function getInvestmentStrategies() {
-  const sql = getSQL()
+  static async getUserByEmail(email: string): Promise<User | null> {
+    try {
+      const [user] = await sql`
+        SELECT id, email, name, username, avatar_url, bio, location, website, created_at, updated_at
+        FROM users 
+        WHERE email = ${email}
+      `
+      return (user as User) || null
+    } catch (error) {
+      logger.error("Failed to get user by email", { email }, error as Error)
+      return null
+    }
+  }
 
-  const strategies = await sql`
-    SELECT s.*, u.full_name as created_by_name, u.username as created_by_username
-    FROM investment_strategies s
-    LEFT JOIN users u ON s.created_by = u.id
-    WHERE s.is_active = true
-    ORDER BY s.created_at DESC
-  `
+  static async getUserById(id: string): Promise<User | null> {
+    try {
+      const [user] = await sql`
+        SELECT id, email, name, username, avatar_url, bio, location, website, created_at, updated_at
+        FROM users 
+        WHERE id = ${id}
+      `
+      return (user as User) || null
+    } catch (error) {
+      logger.error("Failed to get user by id", { id }, error as Error)
+      return null
+    }
+  }
 
-  return strategies
-}
+  // Post operations
+  static async createPost(postData: {
+    user_id: string
+    content: string
+    image_url?: string
+  }): Promise<Post | null> {
+    try {
+      const [post] = await sql`
+        INSERT INTO posts (user_id, content, image_url)
+        VALUES (${postData.user_id}, ${postData.content}, ${postData.image_url || null})
+        RETURNING id, user_id, content, image_url, likes_count, comments_count, created_at, updated_at
+      `
+      return post as Post
+    } catch (error) {
+      logger.error("Failed to create post", { user_id: postData.user_id }, error as Error)
+      return null
+    }
+  }
 
-// Notifications
-export async function createNotification(notificationData: {
-  userId: string
-  type: string
-  title: string
-  message?: string
-  data?: any
-}) {
-  const sql = getSQL()
+  static async getPosts(limit = 20, offset = 0): Promise<Post[]> {
+    try {
+      const posts = await sql`
+        SELECT 
+          p.id, p.user_id, p.content, p.image_url, p.likes_count, p.comments_count, p.created_at, p.updated_at,
+          u.name as user_name, u.username as user_username, u.avatar_url as user_avatar_url
+        FROM posts p
+        JOIN users u ON p.user_id = u.id
+        ORDER BY p.created_at DESC
+        LIMIT ${limit} OFFSET ${offset}
+      `
 
-  const [notification] = await sql`
-    INSERT INTO notifications (user_id, type, title, message, data)
-    VALUES (${notificationData.userId}, ${notificationData.type}, ${notificationData.title}, 
-            ${notificationData.message}, ${JSON.stringify(notificationData.data || {})})
-    RETURNING *
-  `
+      return posts.map((post) => ({
+        id: post.id,
+        user_id: post.user_id,
+        content: post.content,
+        image_url: post.image_url,
+        likes_count: post.likes_count,
+        comments_count: post.comments_count,
+        created_at: post.created_at,
+        updated_at: post.updated_at,
+        user: {
+          id: post.user_id,
+          name: post.user_name,
+          username: post.user_username,
+          avatar_url: post.user_avatar_url,
+          email: "",
+          bio: "",
+          location: "",
+          website: "",
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      })) as Post[]
+    } catch (error) {
+      logger.error("Failed to get posts", {}, error as Error)
+      return []
+    }
+  }
 
-  return notification
-}
+  // Portfolio operations
+  static async createPortfolio(portfolioData: {
+    user_id: string
+    name: string
+    description?: string
+  }): Promise<Portfolio | null> {
+    try {
+      const [portfolio] = await sql`
+        INSERT INTO portfolios (user_id, name, description)
+        VALUES (${portfolioData.user_id}, ${portfolioData.name}, ${portfolioData.description || null})
+        RETURNING id, user_id, name, description, total_value, created_at, updated_at
+      `
+      return portfolio as Portfolio
+    } catch (error) {
+      logger.error("Failed to create portfolio", { user_id: portfolioData.user_id }, error as Error)
+      return null
+    }
+  }
 
-export async function getUserNotifications(userId: string, limit = 20) {
-  const sql = getSQL()
+  static async getUserPortfolios(userId: string): Promise<Portfolio[]> {
+    try {
+      const portfolios = await sql`
+        SELECT id, user_id, name, description, total_value, created_at, updated_at
+        FROM portfolios
+        WHERE user_id = ${userId}
+        ORDER BY created_at DESC
+      `
+      return portfolios as Portfolio[]
+    } catch (error) {
+      logger.error("Failed to get user portfolios", { userId }, error as Error)
+      return []
+    }
+  }
 
-  const notifications = await sql`
-    SELECT * FROM notifications 
-    WHERE user_id = ${userId}
-    ORDER BY created_at DESC
-    LIMIT ${limit}
-  `
+  // Market data operations
+  static async getMarketData(symbols?: string[]): Promise<any[]> {
+    try {
+      let query = sql`
+        SELECT symbol, price, change_24h, volume, market_cap, updated_at
+        FROM market_data
+        ORDER BY market_cap DESC
+      `
 
-  return notifications
-}
+      if (symbols && symbols.length > 0) {
+        query = sql`
+          SELECT symbol, price, change_24h, volume, market_cap, updated_at
+          FROM market_data
+          WHERE symbol = ANY(${symbols})
+          ORDER BY market_cap DESC
+        `
+      }
 
-export async function markNotificationAsRead(notificationId: string) {
-  const sql = getSQL()
-
-  await sql`
-    UPDATE notifications 
-    SET is_read = true 
-    WHERE id = ${notificationId}
-  `
+      const data = await query
+      return data
+    } catch (error) {
+      logger.error("Failed to get market data", { symbols }, error as Error)
+      return []
+    }
+  }
 }
