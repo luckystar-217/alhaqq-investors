@@ -1,96 +1,125 @@
 import { NextResponse } from "next/server"
-import { env } from "@/lib/env"
+import { env, dbConfig, stackAuthConfig } from "@/lib/env"
 import { logger } from "@/lib/logger"
+import { checkDatabaseHealth } from "@/lib/database"
 
 interface HealthCheck {
-  service: string
-  status: "healthy" | "unhealthy" | "degraded"
-  message?: string
-  responseTime?: number
+  status: "healthy" | "unhealthy" | "degraded" | "ok" | "error"
+  timestamp: string
+  version: string
+  environment: string
+  services: {
+    database: ServiceStatus
+    stackAuth: ServiceStatus
+    email: ServiceStatus
+    storage: ServiceStatus
+    auth: ServiceStatus
+    api: ServiceStatus
+  }
+  uptime: number
 }
 
-async function checkDatabase(): Promise<HealthCheck> {
-  const start = Date.now()
+interface ServiceStatus {
+  status: "healthy" | "unhealthy" | "degraded" | "configured" | "not_configured"
+  message?: string
+  latency?: number
+  error?: string
+  connected?: boolean
+}
+
+async function checkDatabase(): Promise<ServiceStatus> {
   try {
-    // Simple database connectivity check
-    // In a real app, you'd use your database client here
-    if (!env.DATABASE_URL) {
+    const start = Date.now()
+
+    // Simple connection check - in a real app you'd use your DB client
+    if (!dbConfig.url) {
       return {
-        service: "database",
         status: "unhealthy",
         message: "Database URL not configured",
-        responseTime: Date.now() - start,
       }
     }
 
+    const responseTime = Date.now() - start
     return {
-      service: "database",
       status: "healthy",
-      message: "Database connection configured",
-      responseTime: Date.now() - start,
+      responseTime,
     }
   } catch (error) {
+    logger.error("Database health check failed", {}, error as Error)
     return {
-      service: "database",
       status: "unhealthy",
       message: error instanceof Error ? error.message : "Unknown database error",
-      responseTime: Date.now() - start,
     }
   }
 }
 
-async function checkStackAuth(): Promise<HealthCheck> {
-  const start = Date.now()
+async function checkStackAuth(): Promise<ServiceStatus> {
   try {
-    if (!env.NEXT_PUBLIC_STACK_PROJECT_ID || !env.STACK_SECRET_SERVER_KEY) {
+    const start = Date.now()
+
+    if (!stackAuthConfig.projectId || !stackAuthConfig.publishableClientKey || !stackAuthConfig.secretServerKey) {
       return {
-        service: "stack-auth",
         status: "unhealthy",
-        message: "Stack Auth not configured",
-        responseTime: Date.now() - start,
+        message: "Stack Auth not properly configured",
       }
     }
 
+    const responseTime = Date.now() - start
     return {
-      service: "stack-auth",
       status: "healthy",
-      message: "Stack Auth configured",
-      responseTime: Date.now() - start,
+      responseTime,
     }
   } catch (error) {
+    logger.error("Stack Auth health check failed", {}, error as Error)
     return {
-      service: "stack-auth",
       status: "unhealthy",
       message: error instanceof Error ? error.message : "Unknown Stack Auth error",
-      responseTime: Date.now() - start,
     }
   }
 }
 
-async function checkRedis(): Promise<HealthCheck> {
-  const start = Date.now()
+async function checkEmail(): Promise<ServiceStatus> {
   try {
-    if (!env.REDIS_URL) {
+    // Check if email configuration is present
+    if (!env.SMTP_HOST && !env.FROM_EMAIL) {
       return {
-        service: "redis",
         status: "degraded",
-        message: "Redis not configured (optional)",
-        responseTime: Date.now() - start,
+        message: "Email service not configured",
       }
     }
 
     return {
-      service: "redis",
       status: "healthy",
-      message: "Redis configured",
-      responseTime: Date.now() - start,
+      message: "Email configuration present",
     }
   } catch (error) {
+    logger.error("Email health check failed", {}, error as Error)
     return {
-      service: "redis",
       status: "unhealthy",
-      message: error instanceof Error ? error.message : "Unknown Redis error",
-      responseTime: Date.now() - start,
+      message: error instanceof Error ? error.message : "Unknown email error",
+    }
+  }
+}
+
+async function checkStorage(): Promise<ServiceStatus> {
+  try {
+    // Check if storage configuration is present
+    if (!env.AWS_ACCESS_KEY_ID && !env.UPLOADTHING_SECRET) {
+      return {
+        status: "degraded",
+        message: "Storage service not configured",
+      }
+    }
+
+    return {
+      status: "healthy",
+      message: "Storage configuration present",
+    }
+  } catch (error) {
+    logger.error("Storage health check failed", {}, error as Error)
+    return {
+      status: "unhealthy",
+      message: error instanceof Error ? error.message : "Unknown storage error",
     }
   }
 }
@@ -99,66 +128,97 @@ export async function GET() {
   try {
     const startTime = Date.now()
 
-    // Run health checks in parallel
-    const [databaseCheck, stackAuthCheck, redisCheck] = await Promise.all([
+    // Run all health checks in parallel
+    const [database, stackAuth, email, storage] = await Promise.all([
       checkDatabase(),
       checkStackAuth(),
-      checkRedis(),
+      checkEmail(),
+      checkStorage(),
     ])
 
-    const checks = [databaseCheck, stackAuthCheck, redisCheck]
-    const totalResponseTime = Date.now() - startTime
+    const dbHealth = await checkDatabaseHealth()
+
+    const services = {
+      database: {
+        status: dbHealth.connected ? "healthy" : "unhealthy",
+        latency: dbHealth.latency,
+        error: dbHealth.error,
+      },
+      stackAuth: {
+        status: stackAuth.status,
+        message: stackAuth.message,
+        responseTime: stackAuth.responseTime,
+      },
+      email: {
+        status: email.status,
+        message: email.message,
+        responseTime: email.responseTime,
+      },
+      storage: {
+        status: storage.status,
+        message: storage.message,
+        responseTime: storage.responseTime,
+      },
+      auth: {
+        status: env.NEXTAUTH_SECRET ? "configured" : "not_configured",
+      },
+      api: { connected: true },
+    }
 
     // Determine overall status
-    const hasUnhealthy = checks.some((check) => check.status === "unhealthy")
-    const hasDegraded = checks.some((check) => check.status === "degraded")
+    const hasUnhealthy = Object.values(services).some((service) => service.status === "unhealthy")
+    const hasDegraded = Object.values(services).some((service) => service.status === "degraded")
 
-    let overallStatus: "healthy" | "unhealthy" | "degraded"
+    let overallStatus: "healthy" | "unhealthy" | "degraded" | "ok" | "error" = "healthy"
     if (hasUnhealthy) {
       overallStatus = "unhealthy"
     } else if (hasDegraded) {
       overallStatus = "degraded"
+    } else if (!dbHealth.connected) {
+      overallStatus = "error"
     } else {
-      overallStatus = "healthy"
+      overallStatus = "ok"
     }
 
-    const response = {
+    const healthCheck: HealthCheck = {
       status: overallStatus,
       timestamp: new Date().toISOString(),
-      environment: env.NODE_ENV,
       version: process.env.npm_package_version || "unknown",
+      environment: env.NODE_ENV,
+      services,
       uptime: process.uptime(),
-      responseTime: totalResponseTime,
-      checks,
-      features: {
-        socialLogin: env.ENABLE_SOCIAL_LOGIN,
-        emailVerification: env.ENABLE_EMAIL_VERIFICATION,
-        twoFactorAuth: env.ENABLE_TWO_FACTOR_AUTH,
-        investmentTracking: env.ENABLE_INVESTMENT_TRACKING,
-        realTimeUpdates: env.ENABLE_REAL_TIME_UPDATES,
-        maintenanceMode: env.MAINTENANCE_MODE,
-      },
     }
 
+    const responseTime = Date.now() - startTime
     logger.info("Health check completed", {
       status: overallStatus,
-      responseTime: totalResponseTime,
+      responseTime,
+      services: Object.fromEntries(Object.entries(services).map(([key, value]) => [key, value.status])),
     })
 
-    // Return appropriate HTTP status code
-    const httpStatus = overallStatus === "healthy" ? 200 : overallStatus === "degraded" ? 200 : 503
+    const statusCode =
+      overallStatus === "healthy" || overallStatus === "ok" ? 200 : overallStatus === "degraded" ? 200 : 503
 
-    return NextResponse.json(response, { status: httpStatus })
+    return NextResponse.json(healthCheck, { status: statusCode })
   } catch (error) {
-    logger.error("Health check failed", { error: error instanceof Error ? error.message : String(error) })
+    logger.error("Health check failed", {}, error as Error)
 
-    return NextResponse.json(
-      {
-        status: "unhealthy",
-        timestamp: new Date().toISOString(),
-        error: error instanceof Error ? error.message : "Unknown error",
+    const errorResponse: HealthCheck = {
+      status: "error",
+      timestamp: new Date().toISOString(),
+      version: "unknown",
+      environment: env.NODE_ENV,
+      services: {
+        database: { status: "unhealthy", message: "Health check failed" },
+        stackAuth: { status: "unhealthy", message: "Health check failed" },
+        email: { status: "unhealthy", message: "Health check failed" },
+        storage: { status: "unhealthy", message: "Health check failed" },
+        auth: { status: "not_configured" },
+        api: { connected: true },
       },
-      { status: 503 },
-    )
+      uptime: process.uptime(),
+    }
+
+    return NextResponse.json(errorResponse, { status: 500 })
   }
 }

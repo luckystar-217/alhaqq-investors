@@ -1,5 +1,3 @@
-import { NextResponse } from "next/server"
-import { ZodError } from "zod"
 import { logger } from "./logger"
 
 export class AppError extends Error {
@@ -46,79 +44,50 @@ export class ConflictError extends AppError {
 }
 
 export class RateLimitError extends AppError {
-  constructor(message = "Too many requests") {
+  constructor(message = "Rate limit exceeded") {
     super(message, 429)
   }
 }
 
-export function handleError(error: unknown): NextResponse {
-  logger.error("Error occurred", { error: error instanceof Error ? error.message : String(error) })
-
-  // Handle Zod validation errors
-  if (error instanceof ZodError) {
-    const validationErrors = error.errors.map((err) => ({
-      field: err.path.join("."),
-      message: err.message,
-    }))
-
-    return NextResponse.json(
-      {
-        error: "Validation failed",
-        details: validationErrors,
-      },
-      { status: 400 },
-    )
+export class DatabaseError extends AppError {
+  constructor(message = "Database operation failed") {
+    super(message, 500)
   }
+}
 
-  // Handle custom app errors
+export class ExternalServiceError extends AppError {
+  constructor(message = "External service unavailable") {
+    super(message, 502)
+  }
+}
+
+export function handleError(error: unknown): AppError {
   if (error instanceof AppError) {
-    return NextResponse.json(
-      {
-        error: error.message,
-      },
-      { status: error.statusCode },
-    )
+    return error
   }
 
-  // Handle generic errors
   if (error instanceof Error) {
-    return NextResponse.json(
-      {
-        error: process.env.NODE_ENV === "production" ? "Internal server error" : error.message,
-      },
-      { status: 500 },
-    )
+    logger.error("Unhandled error", { message: error.message }, error)
+    return new AppError("Internal server error", 500, false)
   }
 
-  // Handle unknown errors
-  return NextResponse.json(
-    {
-      error: "An unexpected error occurred",
+  logger.error("Unknown error", { error })
+  return new AppError("Internal server error", 500, false)
+}
+
+export function isOperationalError(error: Error): boolean {
+  if (error instanceof AppError) {
+    return error.isOperational
+  }
+  return false
+}
+
+export function getErrorResponse(error: AppError) {
+  return {
+    error: {
+      message: error.message,
+      statusCode: error.statusCode,
+      ...(process.env.NODE_ENV === "development" && { stack: error.stack }),
     },
-    { status: 500 },
-  )
-}
-
-export function withErrorHandler<T extends any[], R>(
-  fn: (...args: T) => Promise<R>,
-): (...args: T) => Promise<R | NextResponse> {
-  return async (...args: T) => {
-    try {
-      return await fn(...args)
-    } catch (error) {
-      return handleError(error)
-    }
   }
-}
-
-// Global error handler for unhandled promise rejections
-if (typeof window === "undefined") {
-  process.on("unhandledRejection", (reason, promise) => {
-    logger.error("Unhandled Rejection at:", { promise, reason })
-  })
-
-  process.on("uncaughtException", (error) => {
-    logger.error("Uncaught Exception:", { error: error.message, stack: error.stack })
-    process.exit(1)
-  })
 }

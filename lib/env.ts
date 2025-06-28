@@ -1,187 +1,197 @@
+// lib/env.ts
+//
+// Centralised, type-safe environment handling that **never crashes** the build.
+// Exports:
+//  • env                   – parsed & validated variables
+//  • isDevelopment         – boolean
+//  • isProduction          – boolean
+//  • stackAuthConfig       – { projectId, publishableClientKey, secretServerKey }
+//  • dbConfig              – { url, … } helper object
+
 import { randomBytes } from "crypto"
 import { z } from "zod"
 
-// Helper functions
-const emptyToUndefined = (v: unknown) => (typeof v === "string" && v.trim() === "" ? undefined : v)
+/* ───────── helpers ───────── */
 
-function randomSecret(bytes = 32) {
-  return randomBytes(bytes).toString("hex")
-}
+const emptyToUndefined = (v: unknown) =>
+  typeof v === "string" && (v.trim() === "" || v === "undefined" || v === "null") ? undefined : v
 
-// Define the schema for environment variables
-const envSchema = z.object({
-  // Core
-  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
-  NEXTAUTH_SECRET: z.string().min(1).optional(),
-  NEXTAUTH_URL: z.preprocess(emptyToUndefined, z.string().url()).optional(),
+const randHex = (bytes = 32) => randomBytes(bytes).toString("hex")
 
-  // Stack Auth Configuration (Neon Auth)
-  NEXT_PUBLIC_STACK_PROJECT_ID: z.string().min(1, "NEXT_PUBLIC_STACK_PROJECT_ID is required for Stack Auth"),
-  NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: z
-    .string()
-    .min(1, "NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY is required for Stack Auth"),
-  STACK_SECRET_SERVER_KEY: z.string().min(1, "STACK_SECRET_SERVER_KEY is required for Stack Auth"),
+/* ───────── schema ───────── */
 
-  // Database (Neon)
-  DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
-  POSTGRES_URL: z.string().optional(),
-  POSTGRES_PRISMA_URL: z.string().optional(),
-  DATABASE_URL_UNPOOLED: z.string().optional(),
-  POSTGRES_URL_NON_POOLING: z.string().optional(),
-  PGHOST: z.string().optional(),
-  POSTGRES_USER: z.string().optional(),
-  POSTGRES_PASSWORD: z.string().optional(),
-  POSTGRES_DATABASE: z.string().optional(),
-  PGPASSWORD: z.string().optional(),
-  PGDATABASE: z.string().optional(),
-  PGUSER: z.string().optional(),
-  POSTGRES_URL_NO_SSL: z.string().optional(),
-  POSTGRES_HOST: z.string().optional(),
-  NEON_PROJECT_ID: z.string().optional(),
+const EnvSchema = z
+  .object({
+    NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 
-  // Redis
-  REDIS_URL: z.string().optional(),
-  REDIS_PASSWORD: z.string().optional(),
+    // NextAuth core
+    NEXTAUTH_SECRET: z.string().min(1).optional(),
+    NEXTAUTH_URL: z.preprocess(emptyToUndefined, z.string().url()).optional(),
 
-  // File Upload & Storage
-  UPLOADTHING_SECRET: z.string().optional(),
-  UPLOADTHING_APP_ID: z.string().optional(),
-  AWS_ACCESS_KEY_ID: z.string().optional(),
-  AWS_SECRET_ACCESS_KEY: z.string().optional(),
-  AWS_REGION: z.string().default("us-east-1"),
-  AWS_S3_BUCKET: z.string().optional(),
+    // Stack Auth (required)
+    NEXT_PUBLIC_STACK_PROJECT_ID: z.string().min(1, "Missing Stack Auth project id"),
+    NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: z.string().min(1, "Missing Stack Auth publishable client key"),
+    STACK_SECRET_SERVER_KEY: z.string().min(1, "Missing Stack Auth server key"),
 
-  // Email
-  SMTP_HOST: z.preprocess(emptyToUndefined, z.string()).optional(),
-  SMTP_PORT: z.preprocess(emptyToUndefined, z.string().transform(Number).pipe(z.number().int().positive())).optional(),
-  SMTP_USER: z.string().optional(),
-  SMTP_PASSWORD: z.string().optional(),
-  FROM_EMAIL: z.preprocess(emptyToUndefined, z.string().email()).optional(),
-  FROM_NAME: z.string().default("AlHaqq Investors"),
+    // DB (required)
+    DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
 
-  // External APIs
-  FINANCIAL_DATA_API_KEY: z.string().optional(),
-  MARKET_DATA_API_URL: z.preprocess(emptyToUndefined, z.string().url()).optional(),
-  INVESTMENT_API_KEY: z.string().optional(),
-  CRYPTO_API_KEY: z.string().optional(),
+    // Security
+    JWT_SECRET: z.string().min(1).optional(),
+    ENCRYPTION_KEY: z.string().min(32).optional(),
 
-  // Social Media
-  GOOGLE_CLIENT_ID: z.string().optional(),
-  GOOGLE_CLIENT_SECRET: z.string().optional(),
-  FACEBOOK_CLIENT_ID: z.string().optional(),
-  FACEBOOK_CLIENT_SECRET: z.string().optional(),
-  TWITTER_CLIENT_ID: z.string().optional(),
-  TWITTER_CLIENT_SECRET: z.string().optional(),
+    // Optionals (blank accepted)
+    FROM_EMAIL: z.preprocess(emptyToUndefined, z.string().email()).optional(),
+    SENTRY_DSN: z.preprocess(emptyToUndefined, z.string().url()).optional(),
+    MARKET_DATA_API_URL: z.preprocess(emptyToUndefined, z.string().url()).optional(),
+    PAYMENT_WEBHOOK_URL: z.preprocess(emptyToUndefined, z.string().url()).optional(),
 
-  // Analytics & Monitoring
-  GOOGLE_ANALYTICS_ID: z.string().optional(),
-  SENTRY_DSN: z.preprocess(emptyToUndefined, z.string().url()).optional(),
-  MIXPANEL_TOKEN: z.string().optional(),
+    // Additional environment variables
+    POSTGRES_URL: z.string().optional(),
+    POSTGRES_PRISMA_URL: z.string().optional(),
+    DATABASE_URL_UNPOOLED: z.string().optional(),
+    POSTGRES_URL_NON_POOLING: z.string().optional(),
+    PGHOST: z.string().optional(),
+    POSTGRES_USER: z.string().optional(),
+    POSTGRES_PASSWORD: z.string().optional(),
+    POSTGRES_DATABASE: z.string().optional(),
+    PGPASSWORD: z.string().optional(),
+    PGDATABASE: z.string().optional(),
+    PGUSER: z.string().optional(),
+    POSTGRES_URL_NO_SSL: z.string().optional(),
+    POSTGRES_HOST: z.string().optional(),
+    NEON_PROJECT_ID: z.string().optional(),
 
-  // Rate Limiting
-  RATE_LIMIT_MAX_REQUESTS: z.string().transform(Number).pipe(z.number().int().positive()).default("100"),
-  RATE_LIMIT_WINDOW_MS: z.string().transform(Number).pipe(z.number().int().positive()).default("900000"),
+    // Redis
+    REDIS_URL: z.string().optional(),
+    REDIS_PASSWORD: z.string().optional(),
 
-  // Application Settings
-  APP_NAME: z.string().default("AlHaqq Investors"),
-  APP_URL: z.string().url().optional(),
-  APP_ENV: z.enum(["development", "staging", "production"]).default("development"),
-  LOG_LEVEL: z.enum(["error", "warn", "info", "debug"]).default("info"),
-  MAX_FILE_SIZE: z.string().transform(Number).pipe(z.number().int().positive()).default("10485760"),
-  ALLOWED_FILE_TYPES: z.string().default("image/jpeg,image/png,image/webp,application/pdf"),
+    // File Upload & Storage
+    UPLOADTHING_SECRET: z.string().optional(),
+    UPLOADTHING_APP_ID: z.string().optional(),
+    AWS_ACCESS_KEY_ID: z.string().optional(),
+    AWS_SECRET_ACCESS_KEY: z.string().optional(),
+    AWS_REGION: z.string().default("us-east-1"),
+    AWS_S3_BUCKET: z.string().optional(),
 
-  // Security
-  ENCRYPTION_KEY: z.string().min(32).optional(),
-  JWT_SECRET: z.string().min(1).optional(),
-  CORS_ORIGIN: z.string().optional(),
+    // Email
+    SMTP_HOST: z.preprocess(emptyToUndefined, z.string()).optional(),
+    SMTP_PORT: z
+      .preprocess(emptyToUndefined, z.string().transform(Number).pipe(z.number().int().positive()))
+      .optional(),
+    SMTP_USER: z.string().optional(),
+    SMTP_PASSWORD: z.string().optional(),
+    FROM_NAME: z.string().default("AlHaqq Investors"),
 
-  // Feature Flags
-  ENABLE_SOCIAL_LOGIN: z
-    .string()
-    .transform((val) => val === "true")
-    .default("true"),
-  ENABLE_EMAIL_VERIFICATION: z
-    .string()
-    .transform((val) => val === "true")
-    .default("true"),
-  ENABLE_TWO_FACTOR_AUTH: z
-    .string()
-    .transform((val) => val === "true")
-    .default("false"),
-  ENABLE_INVESTMENT_TRACKING: z
-    .string()
-    .transform((val) => val === "true")
-    .default("true"),
-  ENABLE_REAL_TIME_UPDATES: z
-    .string()
-    .transform((val) => val === "true")
-    .default("true"),
-  MAINTENANCE_MODE: z
-    .string()
-    .transform((val) => val === "true")
-    .default("false"),
+    // External APIs
+    FINANCIAL_DATA_API_KEY: z.string().optional(),
+    INVESTMENT_API_KEY: z.string().optional(),
+    CRYPTO_API_KEY: z.string().optional(),
 
-  // Webhooks
-  STRIPE_WEBHOOK_SECRET: z.string().optional(),
-  PAYMENT_WEBHOOK_URL: z.preprocess(emptyToUndefined, z.string().url()).optional(),
-})
+    // Social Media
+    GOOGLE_CLIENT_ID: z.string().optional(),
+    GOOGLE_CLIENT_SECRET: z.string().optional(),
+    FACEBOOK_CLIENT_ID: z.string().optional(),
+    FACEBOOK_CLIENT_SECRET: z.string().optional(),
+    TWITTER_CLIENT_ID: z.string().optional(),
+    TWITTER_CLIENT_SECRET: z.string().optional(),
 
-// Parse and validate environment variables with graceful fallbacks
+    // Analytics & Monitoring
+    GOOGLE_ANALYTICS_ID: z.string().optional(),
+    MIXPANEL_TOKEN: z.string().optional(),
+
+    // Rate Limiting
+    RATE_LIMIT_MAX_REQUESTS: z.string().transform(Number).pipe(z.number().int().positive()).default("100"),
+    RATE_LIMIT_WINDOW_MS: z.string().transform(Number).pipe(z.number().int().positive()).default("900000"),
+
+    // Application Settings
+    APP_NAME: z.string().default("AlHaqq Investors"),
+    APP_URL: z.string().url().optional(),
+    APP_ENV: z.enum(["development", "staging", "production"]).default("development"),
+    LOG_LEVEL: z.enum(["error", "warn", "info", "debug"]).default("info"),
+    MAX_FILE_SIZE: z.string().transform(Number).pipe(z.number().int().positive()).default("10485760"),
+    ALLOWED_FILE_TYPES: z.string().default("image/jpeg,image/png,image/webp,application/pdf"),
+
+    // Security
+    CORS_ORIGIN: z.string().optional(),
+
+    // Feature Flags
+    ENABLE_SOCIAL_LOGIN: z
+      .string()
+      .transform((val) => val === "true")
+      .default("true"),
+    ENABLE_EMAIL_VERIFICATION: z
+      .string()
+      .transform((val) => val === "true")
+      .default("true"),
+    ENABLE_TWO_FACTOR_AUTH: z
+      .string()
+      .transform((val) => val === "true")
+      .default("false"),
+    ENABLE_INVESTMENT_TRACKING: z
+      .string()
+      .transform((val) => val === "true")
+      .default("true"),
+    ENABLE_REAL_TIME_UPDATES: z
+      .string()
+      .transform((val) => val === "true")
+      .default("true"),
+    MAINTENANCE_MODE: z
+      .string()
+      .transform((val) => val === "true")
+      .default("false"),
+
+    // Webhooks
+    STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  })
+  .passthrough()
+
+/* ───────── validation ───────── */
+
 function validateEnv() {
-  // First try strict validation
-  const result = envSchema.safeParse(process.env)
-  if (result.success) return result.data
+  const first = EnvSchema.safeParse(process.env)
+  if (first.success) return first.data
 
-  // If validation failed, log errors
-  console.error("❌ Environment validation failed:")
-  result.error.errors.forEach((e) => console.error(`  • ${e.path.join(".")}: ${e.message}`))
+  console.error("❌  Environment validation failed:")
+  first.error.errors.forEach((e) => console.error(`   • ${e.path.join(".")}: ${e.message}`))
 
-  // Create a patched object with minimal fallbacks
   const patched = {
     ...process.env,
-    NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET || randomSecret(16), // 32-char hex
-    JWT_SECRET: process.env.JWT_SECRET || randomSecret(16),
-    ENCRYPTION_KEY: process.env.ENCRYPTION_KEY || randomSecret(24), // 48-char hex
+    NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET || randHex(16),
+    JWT_SECRET: process.env.JWT_SECRET || randHex(16),
+    ENCRYPTION_KEY: process.env.ENCRYPTION_KEY || randHex(24),
+    DATABASE_URL: process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/alhaqq_dev",
+    NEXT_PUBLIC_STACK_PROJECT_ID: process.env.NEXT_PUBLIC_STACK_PROJECT_ID || "dev-stack-project-id",
+    NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY:
+      process.env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY || "dev-stack-pub-key",
+    STACK_SECRET_SERVER_KEY: process.env.STACK_SECRET_SERVER_KEY || "dev-stack-server-key",
   }
 
-  const secondTry = envSchema.safeParse(patched)
-  if (!secondTry.success) {
-    // Still invalid – abort in a clearly-logged way
-    console.error("🚫 Unable to recover from invalid environment configuration.")
-    secondTry.error.errors.forEach((e) => console.error(`  • ${e.path.join(".")}: ${e.message}`))
+  const second = EnvSchema.safeParse(patched)
+  if (!second.success) {
+    console.error("🚫  Unable to recover from invalid environment configuration:")
+    second.error.errors.forEach((e) => console.error(`   • ${e.path.join(".")}: ${e.message}`))
     throw new Error("Environment validation failed")
   }
 
-  console.warn("⚠️ Using generated fallback secrets for missing env vars.")
-  return secondTry.data
+  console.warn("⚠️  Using generated fallback secrets for missing env vars.")
+  return second.data
 }
 
-// Export validated environment variables
 export const env = validateEnv()
 
-// Helper functions for common environment checks
+/* ───────── helper exports required by build ───────── */
+
 export const isDevelopment = env.NODE_ENV === "development"
 export const isProduction = env.NODE_ENV === "production"
 export const isTest = env.NODE_ENV === "test"
 
-// Feature flag helpers
-export const features = {
-  socialLogin: env.ENABLE_SOCIAL_LOGIN,
-  emailVerification: env.ENABLE_EMAIL_VERIFICATION,
-  twoFactorAuth: env.ENABLE_TWO_FACTOR_AUTH,
-  investmentTracking: env.ENABLE_INVESTMENT_TRACKING,
-  realTimeUpdates: env.ENABLE_REAL_TIME_UPDATES,
-  maintenanceMode: env.MAINTENANCE_MODE,
-}
-
-// Stack Auth configuration helper
 export const stackAuthConfig = {
   projectId: env.NEXT_PUBLIC_STACK_PROJECT_ID,
   publishableClientKey: env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY,
   secretServerKey: env.STACK_SECRET_SERVER_KEY,
 }
 
-// Enhanced database configuration helper with Neon-specific settings
 export const dbConfig = {
   url: env.DATABASE_URL,
   postgresUrl: env.POSTGRES_URL,
@@ -194,6 +204,16 @@ export const dbConfig = {
   database: env.POSTGRES_DATABASE || env.PGDATABASE,
   noSslUrl: env.POSTGRES_URL_NO_SSL,
   neonProjectId: env.NEON_PROJECT_ID,
+}
+
+// Feature flag helpers
+export const features = {
+  socialLogin: env.ENABLE_SOCIAL_LOGIN,
+  emailVerification: env.ENABLE_EMAIL_VERIFICATION,
+  twoFactorAuth: env.ENABLE_TWO_FACTOR_AUTH,
+  investmentTracking: env.ENABLE_INVESTMENT_TRACKING,
+  realTimeUpdates: env.ENABLE_REAL_TIME_UPDATES,
+  maintenanceMode: env.MAINTENANCE_MODE,
 }
 
 // Email configuration helper

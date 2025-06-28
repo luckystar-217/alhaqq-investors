@@ -1,45 +1,52 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { getServerAuthSession } from "@/lib/auth"
-
-// This would be your posts database in production
-const posts = [
-  // Mock posts data would be here
-]
+import { likePost, unlikePost, getUserByEmail } from "@/lib/database"
+import { logger } from "@/lib/logger"
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   try {
     const session = await getServerAuthSession()
     if (!session?.user) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 })
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
     const postId = params.id
-    const userId = session.user.id
-
-    const postIndex = posts.findIndex((post) => post.id === postId)
-    if (postIndex === -1) {
-      return NextResponse.json({ message: "Post not found" }, { status: 404 })
+    const user = await getUserByEmail(session.user.email!)
+    if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 })
     }
 
-    const post = posts[postIndex]
-    const likedBy = post.likedBy || []
-    const isLiked = likedBy.includes(userId)
+    const result = await likePost(postId, user.id)
 
-    if (isLiked) {
-      // Unlike the post
-      post.likedBy = likedBy.filter((id) => id !== userId)
-      post.likes = Math.max(0, post.likes - 1)
-    } else {
-      // Like the post
-      post.likedBy = [...likedBy, userId]
-      post.likes += 1
-    }
+    logger.info("Post liked successfully", { postId, userId: user.id })
 
-    posts[postIndex] = post
-
-    return NextResponse.json(post)
+    return NextResponse.json(result)
   } catch (error) {
-    console.error("Error liking post:", error)
-    return NextResponse.json({ message: "Failed to like post" }, { status: 500 })
+    logger.error("Error liking post", { error, postId: params.id })
+    return NextResponse.json({ error: "Failed to like post" }, { status: 500 })
+  }
+}
+
+export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const session = await getServerAuthSession()
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
+    const postId = params.id
+    const user = await getUserByEmail(session.user.email!)
+    if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 })
+    }
+
+    const result = await unlikePost(postId, user.id)
+
+    logger.info("Post unliked successfully", { postId, userId: user.id })
+
+    return NextResponse.json(result)
+  } catch (error) {
+    logger.error("Error unliking post", { error, postId: params.id })
+    return NextResponse.json({ error: "Failed to unlike post" }, { status: 500 })
   }
 }

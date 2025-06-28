@@ -1,88 +1,97 @@
-import { env } from "./env"
+type LogLevel = "error" | "warn" | "info" | "debug"
 
-export enum LogLevel {
-  ERROR = 0,
-  WARN = 1,
-  INFO = 2,
-  DEBUG = 3,
-}
-
-const logLevelMap: Record<string, LogLevel> = {
-  error: LogLevel.ERROR,
-  warn: LogLevel.WARN,
-  info: LogLevel.INFO,
-  debug: LogLevel.DEBUG,
+interface LogEntry {
+  level: LogLevel
+  message: string
+  timestamp: string
+  context?: Record<string, unknown>
+  error?: Error
 }
 
 class Logger {
   private level: LogLevel
 
-  constructor() {
-    this.level = logLevelMap[env.LOG_LEVEL] ?? LogLevel.INFO
+  constructor(level: LogLevel = "info") {
+    this.level = level
   }
 
   private shouldLog(level: LogLevel): boolean {
-    return level <= this.level
+    const levels: Record<LogLevel, number> = {
+      error: 0,
+      warn: 1,
+      info: 2,
+      debug: 3,
+    }
+    return levels[level] <= levels[this.level]
   }
 
-  private formatMessage(level: string, message: string, meta?: any): string {
-    const timestamp = new Date().toISOString()
-    const metaStr = meta ? ` ${JSON.stringify(meta)}` : ""
-    return `[${timestamp}] ${level.toUpperCase()}: ${message}${metaStr}`
+  private formatLog(entry: LogEntry): string {
+    const { level, message, timestamp, context, error } = entry
+    let log = `[${timestamp}] ${level.toUpperCase()}: ${message}`
+
+    if (context && Object.keys(context).length > 0) {
+      log += ` | Context: ${JSON.stringify(context)}`
+    }
+
+    if (error) {
+      log += ` | Error: ${error.message}`
+      if (error.stack) {
+        log += `\nStack: ${error.stack}`
+      }
+    }
+
+    return log
   }
 
-  error(message: string, meta?: any): void {
-    if (this.shouldLog(LogLevel.ERROR)) {
-      console.error(this.formatMessage("error", message, meta))
+  private log(level: LogLevel, message: string, context?: Record<string, unknown>, error?: Error): void {
+    if (!this.shouldLog(level)) return
+
+    const entry: LogEntry = {
+      level,
+      message,
+      timestamp: new Date().toISOString(),
+      context,
+      error,
+    }
+
+    const formattedLog = this.formatLog(entry)
+
+    switch (level) {
+      case "error":
+        console.error(formattedLog)
+        break
+      case "warn":
+        console.warn(formattedLog)
+        break
+      case "info":
+        console.info(formattedLog)
+        break
+      case "debug":
+        console.debug(formattedLog)
+        break
     }
   }
 
-  warn(message: string, meta?: any): void {
-    if (this.shouldLog(LogLevel.WARN)) {
-      console.warn(this.formatMessage("warn", message, meta))
-    }
+  error(message: string, context?: Record<string, unknown>, error?: Error): void {
+    this.log("error", message, context, error)
   }
 
-  info(message: string, meta?: any): void {
-    if (this.shouldLog(LogLevel.INFO)) {
-      console.info(this.formatMessage("info", message, meta))
-    }
+  warn(message: string, context?: Record<string, unknown>): void {
+    this.log("warn", message, context)
   }
 
-  debug(message: string, meta?: any): void {
-    if (this.shouldLog(LogLevel.DEBUG)) {
-      console.debug(this.formatMessage("debug", message, meta))
-    }
+  info(message: string, context?: Record<string, unknown>): void {
+    this.log("info", message, context)
   }
 
-  // Convenience methods for common use cases
-  auth(message: string, meta?: any): void {
-    this.info(`[AUTH] ${message}`, meta)
-  }
-
-  db(message: string, meta?: any): void {
-    this.info(`[DB] ${message}`, meta)
-  }
-
-  api(message: string, meta?: any): void {
-    this.info(`[API] ${message}`, meta)
-  }
-
-  security(message: string, meta?: any): void {
-    this.warn(`[SECURITY] ${message}`, meta)
+  debug(message: string, context?: Record<string, unknown>): void {
+    this.log("debug", message, context)
   }
 }
 
-export const logger = new Logger()
+// Create and export logger instance
+const logLevel = (process.env.LOG_LEVEL as LogLevel) || "info"
+export const logger = new Logger(logLevel)
 
-// Export convenience functions
-export const log = {
-  error: (message: string, meta?: any) => logger.error(message, meta),
-  warn: (message: string, meta?: any) => logger.warn(message, meta),
-  info: (message: string, meta?: any) => logger.info(message, meta),
-  debug: (message: string, meta?: any) => logger.debug(message, meta),
-  auth: (message: string, meta?: any) => logger.auth(message, meta),
-  db: (message: string, meta?: any) => logger.db(message, meta),
-  api: (message: string, meta?: any) => logger.api(message, meta),
-  security: (message: string, meta?: any) => logger.security(message, meta),
-}
+// Export types for use in other modules
+export type { LogLevel, LogEntry }
